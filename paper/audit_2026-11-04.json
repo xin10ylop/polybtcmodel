@@ -3,9 +3,9 @@
  "coverage": {
   "windows_in_day": 288,
   "first_seen": "10:45",
-  "last_seen": "14:15",
-  "A_records": 35,
-  "B_records": 39,
+  "last_seen": "15:45",
+  "A_records": 39,
+  "B_records": 43,
   "gaps": [
    [
     1793796600,
@@ -14,89 +14,62 @@
    [
     1793800800,
     1793800800
+   ],
+   [
+    1793802000,
+    1793805000
+   ],
+   [
+    1793805900,
+    1793806500
    ]
   ],
   "late_A": [],
   "late_B": []
  },
  "rules": {
-  "A_checked": 0,
+  "A_checked": 4,
   "A_expected_trades": 0,
   "A_mismatch": [],
   "A_legacy": 35,
-  "B_checked": 0,
+  "B_checked": 4,
   "B_expected_bids": 0,
   "B_mismatch": [],
   "B_filled": 0,
   "B_cancelled": 0
  },
- "exits": {
-  "trades": 12,
-  "exit_mismatch": [
-   {
-    "strategy": "A",
-    "T": 1793790000,
-    "live": [
-     "SL",
-     176.0,
-     -0.321
-    ],
-    "replay": [
-     "SL",
-     201,
-     -0.491
-    ],
-    "prints": 1330
-   },
-   {
-    "strategy": "A",
-    "T": 1793794200,
-    "live": [
-     "SL",
-     160.3,
-     -0.463
-    ],
-    "replay": [
-     "SL",
-     163,
-     -0.472
-    ],
-    "prints": 1491
-   },
-   {
-    "strategy": "B",
-    "T": 1793795400,
-    "live": [
-     "TP",
-     105.1,
-     0.38
-    ],
-    "replay": [
-     "TP",
-     108,
-     0.38
-    ],
-    "prints": 2464
-   }
-  ],
-  "fill_mismatch": [],
-  "A_fill_plausible": 3,
-  "A_trades": 8,
-  "pnl_live": 0.8287690000000002,
-  "pnl_replay": 0.6214250000000003
- },
- "parity": {
-  "source": "archive+REST",
-  "windows": 4,
-  "A_mean_abs_dp": 0.05562637547593344,
-  "A_max_abs_dp": 0.07717052078323988,
-  "A_n": 2,
-  "A_sign_flips": 1,
-  "A_threshold_decisions_differ": 1,
-  "B_mean_abs_dp": 0.01411685991517636,
-  "B_max_abs_dp": 0.0339946826231004,
-  "B_n": 4,
-  "B_sign_flips": 0,
-  "B_threshold_decisions_differ": 0
+ "latency": {
+  "decisions_with_timing": 4,
+  "decision_delay": {
+   "median": 0.32999999999999996,
+   "p95": 1.4719999999999995,
+   "max": 1.67
+  },
+  "compute_s": {
+   "median": 0.2,
+   "p95": 1.3844999999999996,
+   "max": 1.59
+  },
+  "spot_lag": {
+   "median": 0.855,
+   "p95": 0.9424999999999999,
+   "max": 0.95
+  },
+  "perp_lag": {
+   "median": 1.355,
+   "p95": 1.9289999999999998,
+   "max": 1.95
+  },
+  "pm_age": {
+   "median": 0.895,
+   "p95": 3.192499999999999,
+   "max": 3.56
+  },
+  "decisions_on_stale_spot": 0,
+  "B_market_move_T_to_decision": {
+   "mean_abs": 0.010000000000000037,
+   "max_abs": 0.010000000000000064,
+   "n": 2
+  }
  }
 }
