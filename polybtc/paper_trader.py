@@ -342,6 +342,8 @@ class Model:
         for k in R.columns: X[k] = R[k].values
         X["xcur"] = aux["cur"] - aux["p0"]; X["v"] = aux["v"].astype(np.float32)
         out = {"p0": float(np.exp(aux["p0"][0])), "price_now": float(np.exp(aux["cur"][0]))}
+        for k in ("seas_now", "reg_ll_beta_1h", "reg_trend_1d", "reg_catchup_1h", "lrv_300", "hod_et"):   # regime flags for prospective validation
+            out[k] = float(X[k].values[0])
         drift_px = {}
         from btcmodel.models import add_derived
         from btcmodel.predictor import HEAD_H, DIRECT_FEATS
