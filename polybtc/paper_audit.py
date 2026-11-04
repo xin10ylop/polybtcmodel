@@ -102,20 +102,21 @@ def rules(day, fcs, trades, orders):
             res["B_checked"] += 1
             mkt = r.get("market", np.nan); mkt = np.nan if mkt is None else mkt
             plausible = np.isfinite(r.get("p0", np.nan) or np.nan) and np.isfinite(p) and 0.05 < p < 0.95
-            expect = plausible and np.isfinite(mkt) and abs(p - mkt) >= pt.CFG_B["delta"]
+            cfgx = pt.CFGS.get(r["strategy"], pt.CFG_B); st = r["strategy"]
+            expect = plausible and np.isfinite(mkt) and abs(p - mkt) >= cfgx["delta"]
             side = "UP" if p > mkt else "DOWN"
             want_action = f"BID {side}" if expect else ("none" if plausible else "skip")
-            ev = [o for o in orders if o["T"] == T]
+            ev = [o for o in orders if o["T"] == T and o.get("strategy", "B") == st]
             placed = any(o["event"] == "placed" for o in ev); filled = any(o["event"] == "filled" for o in ev); cancelled = any(o["event"] == "cancelled" for o in ev)
-            have = ("B", T) in tr
-            if filled and not have and T + pt.CFG_B["tstop"] > time.time(): res.setdefault("B_open", []).append(T); continue   # position still open
+            have = (st, T) in tr
+            if filled and not have and T + cfgx["tstop"] > time.time(): res.setdefault(f"{st}_open", []).append(T); continue   # position still open
             ok = r["action"] == want_action and placed == expect and (not placed or filled != cancelled) and have == filled
             if not ok:
                 res["B_mismatch"].append(dict(T=T, p=round(p, 3), market=mkt, action=r["action"], want=want_action, placed=placed, filled=filled, cancelled=cancelled, trade=have))
             res["B_expected_bids"] += int(expect); res["B_filled"] += int(filled); res["B_cancelled"] += int(cancelled)
     print(f"rules A: {res['A_checked']} decisions checked ({res['A_legacy']} legacy records without inputs skipped), {res['A_expected_trades']} should have traded, mismatches {len(res['A_mismatch'])}")
     for m in res["A_mismatch"][:10]: print("   ", m)
-    print(f"rules B: {res['B_checked']} decisions checked, {res['B_expected_bids']} should have bid, filled {res['B_filled']}, cancelled {res['B_cancelled']}, mismatches {len(res['B_mismatch'])}")
+    print(f"rules B+C: {res['B_checked']} decisions checked, {res['B_expected_bids']} should have bid, filled {res['B_filled']}, cancelled {res['B_cancelled']}, mismatches {len(res['B_mismatch'])}")
     for m in res["B_mismatch"][:10]: print("   ", m)
     return res
 
@@ -241,7 +242,7 @@ def exits(day, trades, orders):
         cond = conds.get(r["T"])
         if not cond: continue
         if cond not in cache: cache[cond] = pm_prints(cond)
-        pr = cache[cond]; cfg = pt.CFG_A if r["strategy"] == "A" else pt.CFG_B
+        pr = cache[cond]; cfg = pt.CFGS.get(r["strategy"], pt.CFG_B)
         kind, et, px, f = replay_exit(r, pr, cfg)
         pnl = (px - r["entry"] - f) if px is not None else np.nan
         res["pnl_live"] += r["pnl"]; res["pnl_replay"] += (pnl if np.isfinite(pnl) else 0)
@@ -258,8 +259,9 @@ def exits(day, trades, orders):
         cond = conds.get(o["T"])
         if not cond: continue
         if cond not in cache: cache[cond] = pm_prints(cond)
-        side = o["side"]; hit = [ts for ts, up, sz in cache[cond] if o["placed"] - 1 <= ts <= o["placed"] + pt.CFG_B["cancel"] and (up if side == "UP" else 1 - up) <= o["bid"] + 1e-9]
-        ev = [x for x in orders if x["T"] == o["T"] and x["event"] in ("filled", "cancelled")]
+        side = o["side"]; st = o.get("strategy", "B"); until = o["placed"] + pt.CFG_B["cancel"] if st == "B" else o["T"]
+        hit = [ts for ts, up, sz in cache[cond] if o["placed"] - 1 <= ts <= until + 2 and (up if side == "UP" else 1 - up) <= o["bid"] + 1e-9]
+        ev = [x for x in orders if x["T"] == o["T"] and x.get("strategy", "B") == st and x["event"] in ("filled", "cancelled")]
         live_filled = any(x["event"] == "filled" for x in ev)
         if bool(hit) != live_filled:
             res["fill_mismatch"].append(dict(T=o["T"], side=side, bid=o["bid"], live_filled=live_filled, replay_hit=bool(hit)))

@@ -27,7 +27,9 @@ LOG = open(os.path.join(PAPER, "paper.log"), "a")
 DAY = 86400
 CFG_B = dict(delta=0.12, cancel=10, tp=0.80, sl=0.10, tstop=240, slip=0.01, fee=0.07)
 CFG_A = dict(thr=0.05, entry=0.50, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=0.07)
+CFG_C = dict(delta=0.08, decide=-5, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=0.07)   # "B five seconds early": bid at the last print from T-5 until the open
 LAG = 30
+CFGS = {"A": CFG_A, "B": CFG_B, "C": CFG_C}
 
 
 def log(*a):
@@ -481,6 +483,21 @@ class Trader:
                     self.model.regime(T, -45, 0); self.done.add(("A_reg", T))
                 if now >= T - 20 and (T, -LAG, LAG) not in self.model.regime_cache and ("B_reg", T) not in self.done:
                     self.model.regime(T, -LAG, LAG); self.done.add(("B_reg", T))
+                if now >= T - 25 and (T, -LAG, LAG + CFG_C["decide"]) not in self.model.regime_cache and ("C_reg", T) not in self.done:
+                    self.model.regime(T, -LAG, LAG + CFG_C["decide"]); self.done.add(("C_reg", T))
+                # ---- strategy C decision at T-5 (bars through T-6 final at ~T-4.5): disagreement with the last print, bid until the open
+                if T + CFG_C["decide"] + 1.4 <= now < T and ("C", T) not in self.done and self.tl.known >= (T + CFG_C["decide"]) - self.tl.t0_epoch:
+                    self.done.add(("C", T)); fc = self.model.forecast(T, -LAG, LAG + CFG_C["decide"]); p = fc.get("close_p", np.nan)
+                    feed = self.feed_for(T); mkt, _ = feed.last_up() if feed else (np.nan, None)
+                    plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)
+                    action = "skip" if not plausible else ("BID " + ("UP" if p > mkt else "DOWN") if np.isfinite(mkt) and abs(p - mkt) >= CFG_C["delta"] else "none")
+                    self.ffc.write(json.dumps(dict(strategy="C", T=T, ts=round(time.time(), 2), market=mkt, action=action, **self.lat(T + CFG_C["decide"] + 1.4, feed), **fc)) + "\n"); self.ffc.flush()
+                    log(f"[C] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} ({fc['compute_s']}s)")
+                    if plausible and action.startswith("BID"):
+                        side = action[4:]; bid = mkt if side == "UP" else 1 - mkt
+                        self.pending.append(dict(strategy="C", T=T, side=side, bid=bid, placed_ms=int(time.time() * 1000), until=T, p=p, mkt=mkt))
+                        self.forder.write(json.dumps(dict(strategy="C", T=T, side=side, bid=bid, placed=round(time.time(), 2), placed_delay=round(time.time() - T, 2), event="placed")) + "\n"); self.forder.flush()
+                        log(f"[C] REST BID {side} @{bid:.3f} until the open")
                 # ---- btc-predict forecast at the minute boundary T-60 (seconds < T-60)
                 if now >= T - 58 and ("bp", T) not in self.done and self.tl.known >= (T - 60) - self.tl.t0_epoch:
                     self.done.add(("bp", T))
@@ -523,8 +540,8 @@ class Trader:
                         log(f"[B] T={dt.datetime.fromtimestamp(Tb, dt.UTC):%H:%M} SKIP: implausible forecast (p0={fc.get('p0')}, p={p}) - data gap?"); continue
                     if action.startswith("BID"):
                         side = action[4:]; bid = mkt if side == "UP" else 1 - mkt
-                        self.pending.append(dict(T=Tb, side=side, bid=bid, placed_ms=int(time.time() * 1000), until=time.time() + CFG_B["cancel"], p=p, mkt=mkt))
-                        self.forder.write(json.dumps(dict(T=Tb, side=side, bid=bid, placed=round(time.time(), 2), placed_delay=round(time.time() - Tb, 2), event="placed")) + "\n"); self.forder.flush()
+                        self.pending.append(dict(strategy="B", T=Tb, side=side, bid=bid, placed_ms=int(time.time() * 1000), until=time.time() + CFG_B["cancel"], p=p, mkt=mkt))
+                        self.forder.write(json.dumps(dict(strategy="B", T=Tb, side=side, bid=bid, placed=round(time.time(), 2), placed_delay=round(time.time() - Tb, 2), event="placed")) + "\n"); self.forder.flush()
                         log(f"[B] REST BID {side} @{bid:.3f} for {CFG_B['cancel']}s")
                 # ---- pending maker orders
                 for o in list(self.pending):
@@ -533,13 +550,14 @@ class Trader:
                         for ts, pu, tok, sz in feed.prints_since(o["placed_ms"]):
                             ps = pu if o["side"] == "UP" else 1 - pu
                             if ps <= o["bid"] + 1e-9: filled = ts; break
+                    st = o.get("strategy", "B")
                     if filled:
-                        self.pending.remove(o); self.positions.append(Position("B", o["T"], o["side"], o["bid"], filled, CFG_B, o["p"], o["mkt"]))
-                        self.forder.write(json.dumps(dict(T=o["T"], side=o["side"], bid=o["bid"], event="filled", fill_time=round(filled / 1000 - o["T"], 3))) + "\n"); self.forder.flush()
-                        log(f"[B] FILLED {o['side']} @{o['bid']:.3f} at T+{filled/1000 - o['T']:.1f}s")
+                        self.pending.remove(o); self.positions.append(Position(st, o["T"], o["side"], o["bid"], filled, CFGS[st], o["p"], o["mkt"]))
+                        self.forder.write(json.dumps(dict(strategy=st, T=o["T"], side=o["side"], bid=o["bid"], event="filled", fill_time=round(filled / 1000 - o["T"], 3))) + "\n"); self.forder.flush()
+                        log(f"[{st}] FILLED {o['side']} @{o['bid']:.3f} at T{filled/1000 - o['T']:+.1f}s")
                     elif time.time() > o["until"]:
-                        self.pending.remove(o); log(f"[B] cancelled unfilled bid {o['side']} @{o['bid']:.3f}")
-                        self.forder.write(json.dumps(dict(T=o["T"], side=o["side"], bid=o["bid"], event="cancelled")) + "\n"); self.forder.flush()
+                        self.pending.remove(o); log(f"[{st}] cancelled unfilled bid {o['side']} @{o['bid']:.3f}")
+                        self.forder.write(json.dumps(dict(strategy=st, T=o["T"], side=o["side"], bid=o["bid"], event="cancelled")) + "\n"); self.forder.flush()
                 # ---- open positions
                 for pos in list(self.positions):
                     feed = self.feeds.get(pos.T)
@@ -571,7 +589,7 @@ def summary():
         w_, l_ = g.pnl[g.pnl > 0].mean(), g.pnl[g.pnl <= 0].mean(); be = (-l_ / (w_ - l_)) if np.isfinite(w_) and np.isfinite(l_) and w_ > l_ else np.nan
         print(f"\n== strategy {s}: {len(g)} trades, mean pnl/share {g.pnl.mean():+.4f}, win {np.mean(g.pnl > 0):.2%} (break-even {be:.1%} from avg win {w_:+.3f} / avg loss {l_:+.3f}), total {g.pnl.sum():+.3f}, "
               f"settle-equivalent {g.settle_pnl.mean():+.4f} | exits {g.exit_kind.value_counts().to_dict()}")
-    print(f"\n== A + B combined: {len(t)} trades, total {t.pnl.sum():+.3f} per share; at $100 per trade: ${(t.pnl / t.entry * 100).sum():+.0f}")
+    print(f"\n== all strategies combined: {len(t)} trades, total {t.pnl.sum():+.3f} per share; at $100 per trade: ${(t.pnl / t.entry * 100).sum():+.0f}")
     print(t.tail(15)[["strategy", "T", "side", "p_model", "market", "entry", "fill_time", "exit_kind", "exit_time", "exit", "pnl", "resolved_up"]].round(3).to_string(index=False))
 
 

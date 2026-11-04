@@ -92,6 +92,7 @@ CFG_A = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.5
          "thr": 0.05, "tp": 0.80, "sl": 0.05, "tstop": 240}   # exits per the exhaustive grids (README); live rule in final_report_data.py / paper_trader.py
 CFG_B = {"kind": "B", "decision_offset": 0, "cancel": 10, "delta": 0.12, "tp": 0.80, "sl": 0.10, "tstop": 240}
 CFG_B2 = {"kind": "B", "decision_offset": 0, "cancel": 10, "delta": 0.08, "tp": 0.80, "sl": 0.10, "tstop": 240}
+CFG_C = {"kind": "B", "decision_offset": -5, "cancel": 5, "delta": 0.08, "tp": 0.80, "sl": 0.05, "tstop": 240}   # "B five seconds early" (research/preopen_fade.py, preopen_follow_check.py)
 
 if __name__ == "__main__":
     for nm, cfg in (("A", CFG_A), ("B", CFG_B), ("B2", CFG_B2)):
