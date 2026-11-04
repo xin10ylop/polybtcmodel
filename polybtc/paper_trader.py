@@ -155,24 +155,34 @@ def backfill(tl, archive_days=10):
     ok = np.isfinite(pc) & np.isfinite(sc)
     tl.basis = float(np.nanmedian(pc[ok][-DAY:] / sc[ok][-DAY:])) if ok.any() else 1.0
     log(f"archive loaded through {dt.datetime.fromtimestamp(a_end, dt.UTC)}; perp/spot basis {tl.basis:.6f}")
-    # REST backfill of spot 1 s klines up to now
-    t = a_end; now = int(time.time())
-    while t < now - 2:
-        r = requests.get("https://data-api.binance.vision/api/v3/klines", params=dict(symbol="BTCUSDT", interval="1s", startTime=t * 1000, limit=1000), timeout=20).json()
-        if not r: break
-        for k in r:
-            sec = int(k[0]) // 1000
-            tl.set_spot(sec, float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5]), float(k[7]), int(k[8]), float(k[9]))
-        t = int(r[-1][0]) // 1000 + 1
-        if len(r) < 1000: break
-    te = a_end
-    while te < now - 2:
-        r = requests.get("https://data-api.binance.vision/api/v3/klines", params=dict(symbol="ETHUSDT", interval="1s", startTime=te * 1000, limit=1000), timeout=20).json()
-        if not r: break
-        for k in r:
-            tl.set_eth(int(k[0]) // 1000, float(k[4]), float(k[5]), float(k[9]))
-        te = int(r[-1][0]) // 1000 + 1
-        if len(r) < 1000: break
+    # REST backfill of spot + ETH 1 s klines up to now (two threads; retries; progress lines)
+    def klines(sym, t_from):
+        for k in range(8):
+            try:
+                r = requests.get("https://data-api.binance.vision/api/v3/klines", params=dict(symbol=sym, interval="1s", startTime=t_from * 1000, limit=1000), timeout=20)
+                j = r.json()
+                if isinstance(j, list):
+                    return j
+                log(f"backfill {sym}: HTTP {r.status_code} {str(j)[:80]} - retry {k+1}")
+            except Exception as ex:
+                log(f"backfill {sym}: {repr(ex)[:80]} - retry {k+1}")
+            time.sleep(2 + 3 * k)
+        raise RuntimeError(f"backfill {sym} failed at {t_from}")
+    def pull(sym, setter):
+        t = a_end; now = int(time.time()); n = 0; t_w = time.time()
+        while t < now - 2:
+            r = klines(sym, t)
+            if not r: break
+            for k in r: setter(k)
+            t = int(r[-1][0]) // 1000 + 1; n += 1
+            if n % 10 == 0: log(f"backfill {sym}: {dt.datetime.fromtimestamp(t, dt.UTC):%H:%M} reached ({n} requests, {time.time()-t_w:.0f}s)")
+            if len(r) < 1000: break
+        return t
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(2) as ex:
+        f_spot = ex.submit(pull, "BTCUSDT", lambda k: tl.set_spot(int(k[0]) // 1000, float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5]), float(k[7]), int(k[8]), float(k[9])))
+        f_eth = ex.submit(pull, "ETHUSDT", lambda k: tl.set_eth(int(k[0]) // 1000, float(k[4]), float(k[5]), float(k[9])))
+        t = f_spot.result(); f_eth.result()
     tl.finalize_to(t)
     log(f"spot backfilled to {dt.datetime.fromtimestamp(t, dt.UTC)} (perp gap synthetic until live OKX bars arrive)")
 
@@ -428,9 +438,19 @@ class Trader:
 
     def run(self):
         log("paper trader started"); last_T = None; t_start = time.time()
+        self.heartbeat = time.time()
+        def watchdog():                                    # main loop silent > 180 s: dump all stacks, exit (restart loop)
+            import faulthandler
+            while True:
+                time.sleep(10)
+                if time.time() - self.heartbeat > 180:
+                    log("WATCHDOG: main loop stalled for 180 s - dumping stacks to stdout.log and restarting")
+                    faulthandler.dump_traceback(file=sys.stderr, all_threads=True); sys.stderr.flush(); LOG.flush(); os._exit(3)
+        threading.Thread(target=watchdog, daemon=True).start()
         while True:
             try:
                 now = time.time(); T = int(now) // 300 * 300 + 300          # next nominal open
+                self.heartbeat = now
                 if now - t_start < 60:
                     self.finalize(); time.sleep(0.2); continue
                 self.finalize()
