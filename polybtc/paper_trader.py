@@ -488,7 +488,7 @@ class Trader:
                         side = "UP" if p > 0.5 else "DOWN"
                         self.positions.append(Position("A", T, side, CFG_A["entry"], int((T - 45) * 1000), CFG_A, p, mkt)); log(f"[A] BUY {side} @0.50 (assumed pre-open fill)")
                 # ---- strategy B decision at T (bars through T-1 final at ~T+1.5)
-                if now >= T - 300 + 1.6 and ("B", T - 300) not in self.done and self.tl.known >= (T - 300) - self.tl.t0_epoch:
+                if T - 300 + 1.6 <= now < T - 300 + 10 and ("B", T - 300) not in self.done and self.tl.known >= (T - 300) - self.tl.t0_epoch:   # skip stale windows after a restart
                     Tb = T - 300; self.done.add(("B", Tb))
                     fc = self.model.forecast(Tb, -LAG, LAG); p = fc.get("close_p", np.nan)
                     feed = self.feed_for(Tb); mkt, mts = feed.last_up() if feed else (np.nan, None)
