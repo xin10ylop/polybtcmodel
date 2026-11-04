@@ -93,6 +93,7 @@ def rules(day, fcs, trades, orders):
             side = "UP" if p > 0.5 else "DOWN"
             want_action = f"BUY {side}" if expect else ("none" if plausible else "skip")
             have = ("A", T) in tr
+            if expect and not have and T + pt.CFG_A["tstop"] > time.time(): res.setdefault("A_open", []).append(T); continue   # position still open
             if r["action"] != want_action or have != expect or (have and tr[("A", T)]["side"] != side):
                 res["A_mismatch"].append(dict(T=T, p=round(p, 3), z=round(z, 3) if np.isfinite(z) else None, action=r["action"], want=want_action, trade=have))
             res["A_expected_trades"] += int(expect)
@@ -107,6 +108,7 @@ def rules(day, fcs, trades, orders):
             ev = [o for o in orders if o["T"] == T]
             placed = any(o["event"] == "placed" for o in ev); filled = any(o["event"] == "filled" for o in ev); cancelled = any(o["event"] == "cancelled" for o in ev)
             have = ("B", T) in tr
+            if filled and not have and T + pt.CFG_B["tstop"] > time.time(): res.setdefault("B_open", []).append(T); continue   # position still open
             ok = r["action"] == want_action and placed == expect and (not placed or filled != cancelled) and have == filled
             if not ok:
                 res["B_mismatch"].append(dict(T=T, p=round(p, 3), market=mkt, action=r["action"], want=want_action, placed=placed, filled=filled, cancelled=cancelled, trade=have))
@@ -212,7 +214,7 @@ def replay_exit(rec, prints, cfg):
     side = rec["side"]; T = rec["T"]; fill = T + rec["fill_time"]
     for ts, up, sz in prints:
         if ts < fill - 1: continue
-        if ts > T + cfg["tstop"]: break                        # the time-stop fires before any later print
+        if ts > T + cfg["tstop"] + 3: break                    # the time-stop fires before later prints (history stamps lag the match by ~2 s)
         ps = up if side == "UP" else 1 - up
         if ps >= cfg["tp"]: return "TP", ts - T, cfg["tp"], 0.0
         if ps <= cfg["sl"]: return "SL", ts - T, ps - cfg["slip"], pt.fee(ps - cfg["slip"], cfg["fee"])
@@ -243,7 +245,8 @@ def exits(day, trades, orders):
         kind, et, px, f = replay_exit(r, pr, cfg)
         pnl = (px - r["entry"] - f) if px is not None else np.nan
         res["pnl_live"] += r["pnl"]; res["pnl_replay"] += (pnl if np.isfinite(pnl) else 0)
-        same = kind == r["exit_kind"] and (et is None or abs(et - r["exit_time"]) <= 5) and (np.isfinite(pnl) and abs(pnl - r["pnl"]) <= 0.02)   # REST history has 1 s timestamps
+        tol = 0.10 if r["exit_kind"] == "TIME" else 0.02                   # time-stops sell at the live order-book bid, which prints cannot show
+        same = kind == r["exit_kind"] and (et is None or abs(et - r["exit_time"]) <= 5) and (np.isfinite(pnl) and abs(pnl - r["pnl"]) <= tol)   # REST history has 1 s timestamps
         if not same:
             res["exit_mismatch"].append(dict(strategy=r["strategy"], T=r["T"], live=(r["exit_kind"], round(r["exit_time"], 1), round(r["pnl"], 3)), replay=(kind, et, None if not np.isfinite(pnl) else round(pnl, 3)), prints=len(pr)))
         if r["strategy"] == "A":
