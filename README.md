@@ -17,7 +17,9 @@ to simulate trades and to evaluate; the BTC models never saw it.
 | **B: open mispricing** (δ = 0.12, TP 0.80 / SL 0.10 / time-stop T+240) | 22 | **+5.6 ¢** | **+11.2 %** | 65 % | 14.5 | 4.6 | $519 |
 | B2: same, δ = 0.08 (more trades) | 55 | +2.7 ¢ | +5.4 % | 64 % | 11.0 | 3.5 | $1,050 |
 | A: pre-open directional (T−45, btc-predict agreement, TP 0.80 / SL 0.05 / T+240) | 40 | +3.4 ¢ | +6.7 % | 64 % | 12.3 | 3.4 | $606 |
+| C: "B five seconds early" (T−5, δ = 0.08, bid at the last print until the open, TP 0.80 / SL 0.05 / T+240) | 40 | +2.6 ¢ | +5.2 % | 64 % | 7.2 | 2.8 | $1,950 |
 | A + B combined ($100 per trade) | 62 | — | **$17.7 k over 34 days** | — | 18.6 | — | $596 |
+| A + C + B (C first, B on the windows C did not fill) | 93 | — | **$23.3 k over 34 days** | — | 19.4 | — | $597 |
 
 Both strategies were selected on the tuning period (2026-08-20 → 2026-09-30) and then run once on the
 test period. They are also positive on the earlier, structurally different August 1–19 period.
@@ -75,6 +77,19 @@ perp-leads-spot lead-lag; it is **worth ~62 % accuracy over 10 seconds and ~53 %
   level mismatch that persists for seconds.
 * Robust on the test period in every slice (vol terciles, weekday/weekend, all ET hour buckets, both
   sides, slippage 0–3 ¢ → +5.9 … +4.9 ¢) and on the August regime (+4.5 ¢).
+
+### C — "B five seconds early" (added 2026-11-04, `research/preopen_fade.py`, `research/preopen_follow_check.py`)
+
+At T−5 most of the 60-second reference window is already known and the book has usually left 0.50 on pre-open
+flow. The close head re-evaluated at T−5 is compared with the last print; when they disagree by ≥ 0.08 a bid rests at
+the last print on the model's side until the open (fills 56–81% of the time, median 1 s), exits TP 0.80 / SL 0.05 /
+T+240. Found by a grid over decision time (T−25 … T−5), threshold, minimum tilt, entry mode and exits, selected on
+tune and read on test and Aug 1–19; the T−5 cell sits on a plateau (every neighbouring threshold/stop positive in all
+three periods). Fading the pre-open move (buying the cheap side when the book is tilted against the model) is weak and
+rare; the signal is on the *follow* side. C overlaps with B on only a third of its windows; the combined book (C first,
+B on the rest) beats B alone in all three TWAP-era periods (paired day bootstrap p = 0.015 / 0.001 / 0.026). It is the
+junior stream: smaller edge per trade (+2.6 ¢ test), twice the trades, larger drawdowns ($1,950 test vs $519 for B),
+and nothing in July under the old point-price rule (B stayed positive there). Paper-traded as strategy C.
 
 ### A — pre-open directional (the user's base case, conditional on clean fills)
 * Decision at **T−45** from the btcmovement2 close head run as a pseudo window starting at T−45
@@ -224,6 +239,7 @@ Model-improvement experiments (accepted only if tune and test both improve with 
 | model-driven trade management on top of A: exit when the post-reference close head says P(our side) < q, let winners run when P > 0.9 (`research/dynamic_exit.py`, `reports/A_dynamic_exit.csv`) | average loser −43¢ → −35/−38¢ but recoveries cut too: tune +0.3¢ (p≈0.15), test −0.3¢ (p≈0.9); let-run no effect | rejected |
 | pre-open Polymarket taker flow toward our side as a filter (`research/preopen_flow.py`) | higher mean per trade (tune +2.5¢ vs +2.05¢, test +3.2¢ vs +2.9¢) but removes ~40% of still-profitable trades: total daily P&L lower in all periods | not adopted (sizing tilt at most) |
 | pre-open stack for A (`research/preopen_stack.py`): all 78 pre-open forecasts (btcmovement2 at −120…−45 incl. horizon heads, btc-predict at −120/−60 all horizons, btc-movement at −45, the last pre-open print) combined by a logistic and a gradient-boosting learner fitted on tune, scored by confidence on test and Aug 1–19 | in-sample it looks spectacular (GBM top 5%: 80% hit, 14¢/trade) and out of sample it is gone: every confidence bucket on test hits 52–55% and none beats the frozen rule (best logistic decile 55% hit / 63% win / 2.8¢ ≈ frozen 56% / 64% / 3.4¢); the Aug 1–19 top-5% bucket (+4.2¢, p 0.11) failed on test | rejected: pre-open directional accuracy tops out near 55–56% whichever way the forecasts are combined; the frozen rule already sits there |
+| pre-open mispricing grid (`research/preopen_fade.py`, `reports/A_preopen_fade_grid.csv`; `research/preopen_follow_check.py`): decide at T−25 … T−5 on model-vs-last-print disagreement, fade vs follow regimes, bid/taker entries, exits | fade weak and rare (best cell +2 ¢ / 53% on test, ≈ 0 in Aug); follow at T−5 with δ 0.08 positive in Aug 1–19 / tune / test (+4.3 / +3.3 / +2.6 ¢) and additive to B | **adopted as strategy C** (see §3) |
 | tight sell limit for A (`research/tight_tp_A.py`, `reports/A_tight_tp.csv`): 0.50 fill at T−45, sell limit 0.53 / 0.54 / 0.55 placed immediately, stop 0.05, T+240; also entered at T−30 | the limit fills in 89–94% of trades but the 6–11% that never reach it lose ~45¢ each: +0.0 to +0.5¢ per share (tune −$950 … +$570, test +$70 … +$1,220 at $100/trade) vs +2.2 / +3.4¢ ($5.7k / $8.9k) with the 0.80 limit; a 0.50 bid resting from T−30 fills on the wrong windows and loses $3–5k | rejected |
 | later entry for A (`research/entry_timing_A.py`, `reports/A_entry_timing.csv`): decide at T−35 / −25 / −15 / −10 with the forecast available then, buy as a taker, with a bid at the last print (10 s) or with a bid at 0.50 | the later forecasts win more often (up to 71% at T−10 vs 62–64% at T−45) but the market reprices faster than the model sharpens: average entries 0.52–0.60, and no variant beats T−45 / 0.50 on test (frozen $8.9k; best later variant $2.8k, most negative); tune and test disagree on every later variant | rejected: T−45 at 0.50 is the only entry where the market has not yet priced what the model knows |
 | late-flip exit for A (`research/early_flip_exit.py`, `reports/A_early_flip_exit_{main,july}.csv`): after the 0.50 fill, re-evaluate the close head at T−40 … T+30 and sell at the market when P(our side) < q | the later forecasts do carry information (a flip at T0 cuts the hit rate of the original side from 59% to 45%, at T+30 from 65% to 38%) but the market has already repriced by then: every rule (q 0.35–0.50, 7 checkpoint sets) is ≤ the frozen exits on tune (bootstrap p 0.2–0.98), mixed on test, and all are worse in July | rejected |
