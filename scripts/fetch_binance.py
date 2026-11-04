@@ -21,6 +21,8 @@ DAYS = "/home/user/data/days"
 BP_SEC = "/home/user/btc-predict/data/sec"
 BASE = "https://data.binance.vision/data"
 S = requests.Session()
+for _d in [f"{RAW}/spot1s", f"{RAW}/eth1s", f"{RAW}/umagg", DAYS, f"{BP_SEC}/spot", f"{BP_SEC}/um", f"{BP_SEC}/eth"]:
+    os.makedirs(_d, exist_ok=True)
 
 def get(url, retries=6):
     last = None
