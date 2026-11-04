@@ -26,7 +26,7 @@ PAPER = os.path.join(REPO, "paper"); os.makedirs(PAPER, exist_ok=True)
 LOG = open(os.path.join(PAPER, "paper.log"), "a")
 DAY = 86400
 CFG_B = dict(delta=0.12, cancel=10, tp=0.80, sl=0.10, tstop=240, slip=0.01, fee=0.07)
-CFG_A = dict(thr=0.05, entry=0.50, tp=0.80, sl=0.20, tstop=240, slip=0.01, fee=0.07)
+CFG_A = dict(thr=0.05, entry=0.50, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=0.07)
 LAG = 30
 
 

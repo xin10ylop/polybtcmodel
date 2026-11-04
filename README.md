@@ -176,10 +176,12 @@ Improvement pass for strategy A (selection on tune, confirmation on test; `resea
 | confidence-scaled stake | raises mean, not Sharpe; optional |
 | **require btc-predict's 5-min forecast (T−60) to agree with the side** | consistent: tune +2.1¢ vs +1.5¢, test **+2.9¢ vs +2.25¢**, Sharpe 11.6 vs 10.7, win 57.5%, ~39 trades/day; **adopted** |
 | TP 0.75 / SL 0.10 instead of 0.80 / 0.20 | 65% win rate, slightly lower mean; alternative for fewer losing trades |
+| **exhaustive 1¢ grid, 9,408 cells** (`research/exit_grid_full.py`, `reports/A_exit_grid_full.csv`, `research/sl_bootstrap.py`) | TP 0.79–0.81 is a robust ridge in both periods; the 0.20 stop hurts: with TP 0.80 / time-stop T+240, SL ≤ 0.05 beats SL 0.20 in all three periods (Aug 1–19 +62¢/day p=0.01, tune +22¢/day p=0.10, test +18¢/day p=0.12 per $1 share), win 63–64% vs 57%, average loser −43¢ vs −33¢ | **adopted: TP 0.80 / SL 0.05 (catastrophe stop) / time-stop T+240** |
 
 Strategy A (frozen, live): decision at T−45 from the btcmovement2 close head on a pseudo window starting at
 T−45, |p − 0.5| ≥ 0.05, btc-predict core 5-min z-score at T−60 agreeing in sign, buy at 0.50 filled before
-T−40, TP 0.80 (resting), SL 0.20, time-stop T+240. Days ending negative on the test period: 10 of 34.
+T−40, TP 0.80 (resting), SL 0.05 (catastrophe stop only; the 0.20 stop was shown to cut recoveries), time-stop T+240
+(sell at market). Test period with these exits: +3.3¢ per share, 64% win rate, Sharpe 12.5.
 
 ## 8. Paper trading (`polybtc/paper_trader.py`)
 
