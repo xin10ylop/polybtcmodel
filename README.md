@@ -16,10 +16,11 @@ to simulate trades and to evaluate; the BTC models never saw it.
 |---|---|---|---|---|---|---|---|
 | **B: open mispricing** (δ = 0.12, TP 0.80 / SL 0.10 / time-stop T+240) | 22 | **+5.6 ¢** | **+11.2 %** | 65 % | 14.5 | 4.6 | $519 |
 | B2: same, δ = 0.08 (more trades) | 55 | +2.7 ¢ | +5.4 % | 64 % | 11.0 | 3.5 | $1,050 |
-| A: pre-open directional (T−45, btc-predict agreement, TP 0.80 / SL 0.05 / T+240) | 40 | +3.4 ¢ | +6.7 % | 64 % | 12.3 | 3.4 | $606 |
+| A: pre-open directional (T−45, btc-predict agreement, sell limit 0.85, else hold to settlement) | 40 | +4.7 ¢ | +9.3 % | 64 % | 13.6 | 4.2 | $1,120 |
+| A0: the same with the previous exits (TP 0.80 / SL 0.05 / T+240), kept as a shadow | 40 | +3.4 ¢ | +6.7 % | 64 % | 12.3 | 3.4 | $606 |
 | C: "B five seconds early" (T−5, δ = 0.08, bid at the last print until the open, TP 0.80 / SL 0.05 / T+240) | 40 | +2.6 ¢ | +5.2 % | 64 % | 7.2 | 2.8 | $1,950 |
 | A + B combined ($100 per trade) | 62 | — | **$17.7 k over 34 days** | — | 18.6 | — | $596 |
-| A + C + B (C first, B on the windows C did not fill) | 93 | — | **$23.3 k over 34 days** | — | 19.4 | — | $597 |
+| A + C + B (C first, B on the windows C did not fill) | 93 | — | **$26.8 k over 34 days** | — | 21.2 | — | $679 |
 
 Both strategies were selected on the tuning period (2026-08-20 → 2026-09-30) and then run once on the
 test period. They are also positive on the earlier, structurally different August 1–19 period.
@@ -196,7 +197,11 @@ Improvement pass for strategy A (selection on tune, confirmation on test; `resea
 
 Strategy A (frozen, live): decision at T−45 from the btcmovement2 close head on a pseudo window starting at
 T−45, |p − 0.5| ≥ 0.05, btc-predict core 5-min z-score at T−60 agreeing in sign, buy at 0.50 filled before
-T−40, TP 0.80 (resting), SL 0.05 (catastrophe stop only; the 0.20 stop was shown to cut recoveries), time-stop T+240
+T−40, sell limit 0.85 (resting); if it has not filled by the close the position is held to settlement (1.00 / 0.00, no fee).
+No stop and no time-stop: adopted 2026-11-04 from the settlement grid (`research/settle_exit_A.py`): TP 0.85-then-settle
+beats the previous exits (TP 0.80 / SL 0.05 / T+240) in all four periods (+0.6 / +0.6 / +1.3 / +1.0 ¢ on Aug 1–19 / tune /
+test / July; p = 0.004 on test) because ~80% of trades that reach the take-profit go on to resolve our way, and a ≤ 0.05
+print still resolves our way often enough that the stop lost money once settlement was allowed. Previous exits: T+240 time-stop, 0.05 stop
 (sell at market). Test period with these exits: +3.3¢ per share, 64% win rate, Sharpe 12.5.
 
 ## 8. Paper trading (`polybtc/paper_trader.py`)
