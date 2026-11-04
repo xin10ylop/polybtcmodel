@@ -3,7 +3,7 @@ exits, the pre-open strategy A, combined portfolio, sizing. Writes reports/*.csv
 import os
 import numpy as np, pandas as pd, sys, json, warnings, os
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "polybtc"))
-import polysim, strategy_eval as se, experiments as ex  # noqa: E402, final_strategy as fs
+import polysim, strategy_eval as se, experiments as ex, final_strategy as fs  # noqa: E402
 warnings.filterwarnings("ignore"); pd.set_option("display.width", 250)
 TUNE, TEST, OLD = se.TUNE, se.TEST, se.OLD
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "reports"); os.makedirs(OUT, exist_ok=True)
