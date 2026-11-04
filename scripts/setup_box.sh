@@ -11,12 +11,16 @@ sudo mkdir -p /home/user && sudo chown "$USER" /home/user
 cd /home/user
 for r in btc-predict btc-movement btcmovement2; do [ -d $r ] || git clone $GH/$r.git; done        # model repos: default branch
 [ -d polybtcmodel ] || git clone -b $BR $GH/polybtcmodel.git
-python3 -m pip install -q -r polybtcmodel/requirements.txt websocket-client
+sudo apt-get install -y -qq python3-venv python3-full > /dev/null
+[ -d /home/user/venv ] || python3 -m venv /home/user/venv
+PY=/home/user/venv/bin/python3
+$PY -m pip install -q --upgrade pip
+$PY -m pip install -q -r polybtcmodel/requirements.txt websocket-client
 echo "== 10 days of Binance archive history (spot, ETH, perp) in every format the models need"
 START=$(date -u -d "11 days ago" +%F); END=$(date -u -d "yesterday" +%F)
-python3 polybtcmodel/scripts/fetch_binance.py $START $END 4
-BTC_DATA_DIR=/home/user/data python3 -c "import sys; sys.path.insert(0,'/home/user/btcmovement2'); from btcmodel.timeline import build_timeline; build_timeline()"
+$PY polybtcmodel/scripts/fetch_binance.py $START $END 4
+BTC_DATA_DIR=/home/user/data $PY -c "import sys; sys.path.insert(0,'/home/user/btcmovement2'); from btcmodel.timeline import build_timeline; build_timeline()"
 echo "== start the paper trader (auto-restart loop, logs in /home/user/polybtcmodel/paper/)"
 cd /home/user/polybtcmodel
-nohup bash -c 'while true; do python3 -W ignore polybtc/paper_trader.py >> paper/stdout.log 2>&1; echo "trader exited $(date -u)" >> paper/stdout.log; sleep 5; done' > /dev/null 2>&1 &
-echo "running. tally:  python3 polybtc/paper_trader.py --summary     log: tail -f paper/paper.log"
+nohup bash -c 'while true; do /home/user/venv/bin/python3 -W ignore polybtc/paper_trader.py >> paper/stdout.log 2>&1; echo "trader exited $(date -u)" >> paper/stdout.log; sleep 5; done' > /dev/null 2>&1 &
+echo "running. tally:  /home/user/venv/bin/python3 polybtc/paper_trader.py --summary     log: tail -f paper/paper.log"
