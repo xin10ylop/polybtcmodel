@@ -45,6 +45,8 @@ class LiveTimeline:
     def __init__(self, t0_epoch, days=25):
         self.t0_epoch = t0_epoch; self.cap = days * DAY
         self.a = {k: np.zeros(self.cap, dtype=dt_) for k, dt_ in FIELDS.items()}
+        for k in ("e_c", "e_v", "e_bv", "p_nb", "p_lbv", "p_lsv", "p_qv"):
+            self.a[k] = np.full(self.cap, np.nan if k == "e_c" else 0.0)
         for k in ("s_open", "s_high", "s_low", "s_close", "p_open", "p_high", "p_low", "p_close", "p_vwap"):
             self.a[k][:] = np.nan
         self.known = 0                      # seconds [0, known) are final
@@ -71,6 +73,14 @@ class LiveTimeline:
         a = self.a
         for k in ("p_open", "p_high", "p_low", "p_close", "p_buy", "p_sell", "p_ntr", "p_maxq", "p_vwap"):
             a[k][i] = bar[k]
+        for k in ("p_nb", "p_lbv", "p_lsv"):
+            a[k][i] = bar.get(k, 0.0)
+        a["p_qv"][i] = bar.get("pv", 0.0)
+
+    def set_eth(self, sec, c, v, bv):
+        i = sec - self.t0_epoch
+        if 0 <= i < self.cap:
+            self.a["e_c"][i], self.a["e_v"][i], self.a["e_bv"][i] = c, v, bv
 
     def finalize_to(self, sec):
         """Mark seconds < sec as known: forward-fill missing prices, synthesize missing perp from spot."""
@@ -89,6 +99,9 @@ class LiveTimeline:
                 px = a["s_close"][t] * basis
                 a["p_open"][t] = a["p_high"][t] = a["p_low"][t] = a["p_close"][t] = a["p_vwap"][t] = px
                 a["p_buy"][t] = a["s_tb_base"][t]; a["p_sell"][t] = max(a["s_volume"][t] - a["s_tb_base"][t], 0); a["p_ntr"][t] = a["s_count"][t]
+                a["p_nb"][t] = a["s_count"][t] / 2; a["p_qv"][t] = px * a["s_volume"][t]
+            if np.isnan(a["e_c"][t]):
+                a["e_c"][t] = a["e_c"][t - 1] if t > 0 else np.nan
         self.known = j
 
     def view(self, k, lo, hi):
@@ -96,7 +109,7 @@ class LiveTimeline:
         x = self.a[k][lo:hi].copy()
         kn = self.known - lo
         if kn < len(x):
-            if k in ("s_open", "s_high", "s_low", "s_close", "p_open", "p_high", "p_low", "p_close", "p_vwap"):
+            if k in ("s_open", "s_high", "s_low", "s_close", "p_open", "p_high", "p_low", "p_close", "p_vwap", "e_c"):
                 x[max(kn, 0):] = self.a[k][self.known - 1] if self.known > 0 else np.nan
             else:
                 x[max(kn, 0):] = 0
@@ -128,6 +141,16 @@ def backfill(tl, archive_days=10):
     for k in FIELDS:
         tl.a[k][: hi - lo] = np.asarray(atl[k][lo:hi])
     tl.known = hi - lo
+    # btc-predict archive extras (eth, perp nb/lbv/lsv/qv) for the same days
+    import pandas as _pd
+    for i_d in range((hi - lo) // DAY):
+        day = dt.datetime.fromtimestamp(start + i_d * DAY, dt.UTC).date(); j0 = i_d * DAY
+        try:
+            e = _pd.read_parquet(f"/home/user/btc-predict/data/sec/eth/{day}.parquet"); u = _pd.read_parquet(f"/home/user/btc-predict/data/sec/um/{day}.parquet")
+            tl.a["e_c"][j0:j0 + DAY] = e["c"].to_numpy(float); tl.a["e_v"][j0:j0 + DAY] = e["v"].to_numpy(float); tl.a["e_bv"][j0:j0 + DAY] = e["bv"].to_numpy(float)
+            for k, c in (("p_nb", "nb"), ("p_lbv", "lbv"), ("p_lsv", "lsv"), ("p_qv", "qv")): tl.a[k][j0:j0 + DAY] = u[c].to_numpy(float)
+        except Exception as ex:
+            log("archive extras missing for", day, repr(ex)[:60])
     pc, sc = tl.a["p_close"][:tl.known], tl.a["s_close"][:tl.known]
     ok = np.isfinite(pc) & np.isfinite(sc)
     tl.basis = float(np.nanmedian(pc[ok][-DAY:] / sc[ok][-DAY:])) if ok.any() else 1.0
@@ -141,6 +164,14 @@ def backfill(tl, archive_days=10):
             sec = int(k[0]) // 1000
             tl.set_spot(sec, float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5]), float(k[7]), int(k[8]), float(k[9]))
         t = int(r[-1][0]) // 1000 + 1
+        if len(r) < 1000: break
+    te = a_end
+    while te < now - 2:
+        r = requests.get("https://data-api.binance.vision/api/v3/klines", params=dict(symbol="ETHUSDT", interval="1s", startTime=te * 1000, limit=1000), timeout=20).json()
+        if not r: break
+        for k in r:
+            tl.set_eth(int(k[0]) // 1000, float(k[4]), float(k[5]), float(k[9]))
+        te = int(r[-1][0]) // 1000 + 1
         if len(r) < 1000: break
     tl.finalize_to(t)
     log(f"spot backfilled to {dt.datetime.fromtimestamp(t, dt.UTC)} (perp gap synthetic until live OKX bars arrive)")
@@ -159,6 +190,18 @@ def spot_ws(tl, stop):
                     tl.last_spot_sec = sec
         except Exception as e:
             log("spot ws error", repr(e)[:120]); time.sleep(2)
+
+
+def eth_ws(tl, stop):
+    while not stop.is_set():
+        try:
+            ws = websocket.create_connection("wss://data-stream.binance.vision/ws/ethusdt@kline_1s", timeout=30)
+            while not stop.is_set():
+                d = json.loads(ws.recv())["k"]
+                if d["x"]:
+                    tl.set_eth(int(d["t"]) // 1000, float(d["c"]), float(d["v"]), float(d["V"]))
+        except Exception as e:
+            log("eth ws error", repr(e)[:120]); time.sleep(2)
 
 
 def okx_ws(tl, stop):
@@ -185,9 +228,11 @@ def okx_ws(tl, stop):
                         sec = int(tr["ts"]) // 1000; px = float(tr["px"]); q = float(tr["sz"]) * CT; buy = tr["side"] == "buy"
                         b = tl.perp_pending.get(sec)
                         if b is None:
-                            b = tl.perp_pending[sec] = dict(p_open=px, p_high=px, p_low=px, p_close=px, p_buy=0.0, p_sell=0.0, p_ntr=0, p_maxq=0.0, pv=0.0, vv=0.0)
+                            b = tl.perp_pending[sec] = dict(p_open=px, p_high=px, p_low=px, p_close=px, p_buy=0.0, p_sell=0.0, p_ntr=0, p_maxq=0.0, pv=0.0, vv=0.0, p_nb=0, p_lbv=0.0, p_lsv=0.0)
                         b["p_high"] = max(b["p_high"], px); b["p_low"] = min(b["p_low"], px); b["p_close"] = px
                         b["p_buy" if buy else "p_sell"] += q; b["p_ntr"] += 1; b["p_maxq"] = max(b["p_maxq"], q); b["pv"] += px * q; b["vv"] += q
+                        if buy: b["p_nb"] += 1
+                        if q >= 1.0: b["p_lbv" if buy else "p_lsv"] += q
                     tl.last_perp_sec = max(tl.perp_pending) if tl.perp_pending else None
             time.sleep(0.4)
         except Exception as e:
@@ -358,6 +403,9 @@ class Trader:
         backfill(self.tl)
         threading.Thread(target=spot_ws, args=(self.tl, self.stop), daemon=True).start()
         threading.Thread(target=okx_ws, args=(self.tl, self.stop), daemon=True).start()
+        threading.Thread(target=eth_ws, args=(self.tl, self.stop), daemon=True).start()
+        from bp_live import BPLive
+        self.bp = BPLive(); self.bp_z = {}
         self.model = Model(self.tl); self.feeds = {}; self.pending = []; self.positions = []; self.done = set()
         self.ftrade = open(os.path.join(PAPER, "paper_trades.jsonl"), "a"); self.ffc = open(os.path.join(PAPER, "forecasts.jsonl"), "a")
 
@@ -389,13 +437,28 @@ class Trader:
                     self.model.regime(T, -45, 0); self.done.add(("A_reg", T))
                 if now >= T - 20 and (T, -LAG, LAG) not in self.model.regime_cache and ("B_reg", T) not in self.done:
                     self.model.regime(T, -LAG, LAG); self.done.add(("B_reg", T))
+                # ---- btc-predict forecast at the minute boundary T-60 (seconds < T-60)
+                if now >= T - 58 and ("bp", T) not in self.done and self.tl.known >= (T - 60) - self.tl.t0_epoch:
+                    self.done.add(("bp", T))
+                    try:
+                        lo = (T - 60) - 60 * 2880 - 900; i0 = lo - self.tl.t0_epoch; i1 = (T - 60) - self.tl.t0_epoch
+                        v = lambda k: self.tl.view(k, i0, i1)
+                        spot = dict(o=v("s_open"), h=v("s_high"), l=v("s_low"), c=v("s_close"), v=v("s_volume"), qv=v("s_qvol"), n=v("s_count"), bv=v("s_tb_base"))
+                        um = dict(o=v("p_open"), h=v("p_high"), l=v("p_low"), c=v("p_close"), v=v("p_buy") + v("p_sell"), qv=v("p_qv"), n=v("p_ntr"), bv=v("p_buy"), nb=v("p_nb"), lbv=v("p_lbv"), lsv=v("p_lsv"), mxq=v("p_maxq"))
+                        eth = dict(c=v("e_c"), v=v("e_v"), bv=v("e_bv"))
+                        tb = time.time(); z, ts_last = self.bp.forecast(spot, um, eth, lo); self.bp_z[T] = z
+                        log(f"[bp] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} z_s5={z['s5']:+.3f} z_s1={z['s1']:+.3f} (bar {ts_last:%H:%M}, {time.time()-tb:.1f}s)")
+                    except Exception as e:
+                        log("bp error", repr(e)[:200])
                 # ---- strategy A decision at T-45 (bars through T-46 final at ~T-44)
                 if now >= T - 43.5 and ("A", T) not in self.done and self.tl.known >= (T - 45) - self.tl.t0_epoch:
                     self.done.add(("A", T)); fc = self.model.forecast(T, -45, 0); p = fc.get("close_p", np.nan)
                     self.ffc.write(json.dumps(dict(strategy="A", T=T, **fc)) + "\n"); self.ffc.flush()
                     feed = self.feed_for(T); mkt, _ = feed.last_up() if feed else (np.nan, None)
-                    log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} ({fc['compute_s']}s)")
-                    if np.isfinite(p) and abs(p - 0.5) >= CFG_A["thr"] and feed is not None:
+                    z5 = self.bp_z.get(T, {}).get("s5", np.nan)
+                    agree = np.isfinite(z5) and np.sign(z5) == np.sign(p - 0.5)
+                    log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} p_close={p:.3f} bp_z5={z5:+.3f} agree={agree} market={mkt:.3f} ({fc['compute_s']}s)")
+                    if np.isfinite(p) and abs(p - 0.5) >= CFG_A["thr"] and feed is not None and agree:
                         side = "UP" if p > 0.5 else "DOWN"
                         self.positions.append(Position("A", T, side, CFG_A["entry"], int((T - 45) * 1000), CFG_A, p, mkt)); log(f"[A] BUY {side} @0.50 (assumed pre-open fill)")
                 # ---- strategy B decision at T (bars through T-1 final at ~T+1.5)

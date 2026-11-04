@@ -41,7 +41,7 @@ def load_windows(days=None):
 def simulate(mk, g, t_entry=-45, pe=0.50, tps=(0.55, 0.58, 0.60, 0.62, 0.65, 0.70, 0.75, 0.80),
              sls=(0.25, 0.30, 0.35, 0.40, 0.42, 0.45, 0.47), tstops=(240, 270, 290, 300), slip=0.01,
              entry_from_trades=False, entry_taker=False, entry_fee=False, entry_next_trade=False,
-             entry_mode=None, t_cancel=0, bid=0.50):
+             entry_mode=None, t_cancel=0, bid=0.50, trail=None):
     """Entry modes:
        'fixed'  (default): filled at `pe` at t_entry (assumed).
        'maker' : resting bid at `bid` placed at t_entry; fills at the first print of our side at <= bid
@@ -106,6 +106,13 @@ def simulate(mk, g, t_entry=-45, pe=0.50, tps=(0.55, 0.58, 0.60, 0.62, 0.65, 0.7
                 continue
             rm = np.maximum.accumulate(p); rn = np.minimum.accumulate(p)
             i_tp = np.searchsorted(rm, tps, side="left"); i_sl = np.searchsorted(-rn, -sls, side="left"); i_ts = np.searchsorted(t, tstops, side="right")
+            if trail is not None:
+                # trailing stop: once a print >= arm has occurred, the stop becomes `lock`
+                arm, lock = trail
+                armed = rm >= arm
+                hit = np.flatnonzero(armed & (p <= lock))
+                i_tr = hit[0] if len(hit) else len(p)
+                i_sl = np.minimum(i_sl, i_tr)
             I_tp = i_tp[:, None, None]; I_sl = i_sl[None, :, None]; I_ts = i_ts[None, None, :]
             first = np.minimum(np.minimum(I_tp, I_sl), I_ts)
             tp_px = np.broadcast_to(tps[:, None, None], first.shape)
