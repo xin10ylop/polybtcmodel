@@ -12,9 +12,10 @@ pd.set_option("display.width", 220)
 day = dt.date.fromisoformat(sys.argv[1]); K = "/home/user/data/kalshi"
 mk = pd.read_parquet(f"{K}/markets_{day}.parquet"); tr = pd.read_parquet(f"{K}/trades_{day}.parquet")
 mk["open"] = pd.to_datetime(mk.open_time, utc=True); mk["close"] = pd.to_datetime(mk.close_time, utc=True)
-mk["T0"] = (mk.open.astype("int64") // 10**9).astype(int); mk["T1"] = (mk.close.astype("int64") // 10**9).astype(int)
+EP = pd.Timestamp(0, tz="UTC")
+mk["T0"] = ((mk.open - EP) // pd.Timedelta("1s")).astype(int); mk["T1"] = ((mk.close - EP) // pd.Timedelta("1s")).astype(int)
 mk = mk.sort_values("T0").reset_index(drop=True)
-tr["t"] = (tr.ts.astype("int64") // 10**9).astype(int) + (tr.ts.astype("int64") % 10**9) / 1e9
+tr["t"] = (tr.ts - EP) / pd.Timedelta("1s"); tr = tr.sort_values("t", kind="stable").reset_index(drop=True)   # the API returns newest first
 tr = tr.merge(mk[["ticker", "T0", "T1"]], on="ticker"); tr["rel"] = tr.t - tr.T0
 # Binance 1 s closes for the day and the previous day
 prev = day - dt.timedelta(days=1); base = int(dt.datetime(prev.year, prev.month, prev.day, tzinfo=dt.UTC).timestamp())

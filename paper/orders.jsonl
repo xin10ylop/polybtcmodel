@@ -4,3 +4,7 @@
 {"strategy": "C", "T": 1793834700, "side": "UP", "bid": 0.55, "event": "filled", "fill_time": -3.13}
 {"strategy": "C", "T": 1793835300, "side": "DOWN", "bid": 0.22999999999999998, "placed": 1793835296.93, "placed_delay": -3.07, "event": "placed"}
 {"strategy": "C", "T": 1793835300, "side": "DOWN", "bid": 0.22999999999999998, "event": "filled", "fill_time": -1.43}
+{"strategy": "C", "T": 1793835600, "side": "UP", "bid": 0.45, "placed": 1793835596.79, "placed_delay": -3.21, "event": "placed"}
+{"strategy": "C", "T": 1793835600, "side": "UP", "bid": 0.45, "event": "filled", "fill_time": -1.589}
+{"strategy": "B", "T": 1793835600, "side": "UP", "bid": 0.43, "placed": 1793835602.07, "placed_delay": 2.07, "event": "placed"}
+{"strategy": "B", "T": 1793835600, "side": "UP", "bid": 0.43, "event": "filled", "fill_time": 2.469}

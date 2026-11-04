@@ -40,5 +40,5 @@ for i, m in enumerate(mdf.itertuples()):
         print(f"{i+1}/{len(mdf)} markets, {len(rows)} trades", flush=True)
         pd.DataFrame(rows, columns=["ticker", "created_time", "yes_price", "count", "taker_side", "taker_book_side"]).to_parquet(ck, index=False)
 tdf = pd.DataFrame(rows, columns=["ticker", "created_time", "yes_price", "count", "taker_side", "taker_book_side"])
-tdf["ts"] = pd.to_datetime(tdf.created_time, utc=True)
+tdf["ts"] = pd.to_datetime(tdf.created_time, utc=True, format="ISO8601")
 tdf.to_parquet(f"{OUT}/trades_{day}.parquet", index=False); print("saved", len(tdf), "trades", flush=True)
