@@ -21,6 +21,7 @@ import paper_trader as pt  # noqa: E402
 
 DAY = 86400
 PAPER = pt.PAPER
+pt.LOG = open(os.path.join(PAPER, "audit.log"), "a")      # keep the audit's own lines out of paper.log
 
 
 def load_jsonl(name):
