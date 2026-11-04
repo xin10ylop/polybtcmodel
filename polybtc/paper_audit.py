@@ -224,8 +224,11 @@ def replay_exit(rec, prints, cfg):
 
 def exits(day, trades, orders):
     t0, t1 = day_bounds(day)
-    tr = [r for r in trades if t0 <= r["T"] < t1]
-    ords = [o for o in orders if t0 <= o["T"] < t1 and o["event"] == "placed"]
+    fresh = time.time() - 900                                   # Polymarket's trade history is indexed with a lag of a few minutes
+    tr = [r for r in trades if t0 <= r["T"] < t1 and r["T"] + 300 < fresh]
+    ords = [o for o in orders if t0 <= o["T"] < t1 and o["event"] == "placed" and o["T"] + 300 < fresh]
+    skipped = len([r for r in trades if t0 <= r["T"] < t1 and r["T"] + 300 >= fresh])
+    if skipped: print(f"exits: {skipped} trade(s) from the last 15 minutes not replayed yet (history still being indexed); re-run later")
     res = {"trades": len(tr), "exit_mismatch": [], "fill_mismatch": [], "A_fill_plausible": 0, "A_trades": 0, "pnl_live": 0.0, "pnl_replay": 0.0}
     conds = {}
     for T in sorted(set([r["T"] for r in tr] + [o["T"] for o in ords])):
