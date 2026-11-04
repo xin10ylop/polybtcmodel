@@ -23,8 +23,8 @@ from btcmodel.predictor import Predictor, HEAD_H, DIRECT_FEATS
 from btcmodel.events import TOUCH_LEVELS, FP_LEVELS, TOUCH_FEATS, FP_FEATS
 from btcmodel.prob import p_touch, p_double_barrier
 
-OUT = "/home/user/data/forecasts"; os.makedirs(OUT, exist_ok=True)
-L = 30
+OUT = os.environ.get("M2_OUT", "/home/user/data/forecasts"); os.makedirs(OUT, exist_ok=True)
+L = int(os.environ.get("M2_REF_LAG", "30"))      # reference lag: 30 s from Sept 2026 (60 s TWAP ending at T); 0 for the earlier point-price rule
 PRE = [-120, -90, -75, -60, -50, -45, -40, -35, -30]                 # group A: pseudo-start at T+d
 POST = [-25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 30, 45, 60, 90, 120, 150, 180, 210, 240, 260]  # group B
 KEEP_FEATS = ["pls_1", "pls_2", "pls_5", "pls_10", "pls_30", "pls_60", "bdev_10", "bdev_60", "bdev_300", "bdev_1800",

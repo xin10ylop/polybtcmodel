@@ -16,7 +16,7 @@ BM_COLS = ["h10_p", "h10_pup_now", "h30_p", "h30_pup_now", "h60_p", "h60_pup_now
            "close_touch+5", "close_touch-5", "basis_dev_60", "basis_dev_300", "zfret_5", "fofi_5", "lrv_300", "K_bm", "S_bm"]
 
 def wide(prefix, cols, offs):
-    files = sorted(glob.glob(f"/home/user/data/forecasts/{prefix}_*.parquet"))
+    files = sorted(glob.glob(f"{os.environ.get('FORECASTS_DIR', '/home/user/data/forecasts')}/{prefix}_*.parquet"))
     if not files:
         return None
     fc = pd.concat([pd.read_parquet(f, columns=["T", "d"] + [c for c in cols]) for f in files], ignore_index=True)
