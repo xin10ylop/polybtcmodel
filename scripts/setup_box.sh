@@ -26,6 +26,6 @@ export PAPER_DIR=/home/user/paper; mkdir -p $PAPER_DIR
 cd /home/user/polybtcmodel
 for pid in $(ps -eo pid,cmd | awk '/[p]aper_trader.py/ {print $1}'); do kill $pid; done; sleep 2    # one trader only
 nohup bash -c 'while true; do /home/user/venv/bin/python3 -W ignore polybtc/paper_trader.py >> $PAPER_DIR/stdout.log 2>&1; echo "trader exited $(date -u)" >> $PAPER_DIR/stdout.log; sleep 5; done' > /dev/null 2>&1 &
-sleep 3; tail -3 $PAPER_DIR/paper.log
+sleep 5; tail -3 $PAPER_DIR/paper.log 2>/dev/null || true
 echo "running.  log:   tail -f /home/user/paper/paper.log"
 echo "          tally: PAPER_DIR=/home/user/paper /home/user/venv/bin/python3 /home/user/polybtcmodel/polybtc/paper_trader.py --summary"
