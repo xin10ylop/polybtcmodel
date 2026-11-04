@@ -87,12 +87,12 @@ class LiveTimeline:
         j = sec - self.t0_epoch
         if j <= self.known: return
         a = self.a; lo, hi = self.known, j
-        for k in ("s_open", "s_high", "s_low", "s_close"):
-            x = a[k][lo:hi]
-            if np.isnan(x).any():
-                prev = a["s_close"][lo - 1] if lo > 0 else np.nan
-                for t in range(lo, hi):
-                    if np.isnan(a[k][t]): a[k][t] = a["s_close"][t - 1] if t > 0 else prev
+        # forward-fill the close first (gaps from feed outages), then derive open/high/low from it
+        for t in range(lo, hi):
+            if np.isnan(a["s_close"][t]) and t > 0: a["s_close"][t] = a["s_close"][t - 1]
+        for k in ("s_open", "s_high", "s_low"):
+            for t in range(lo, hi):
+                if np.isnan(a[k][t]): a[k][t] = a["s_close"][t]
         for t in range(lo, hi):
             if np.isnan(a["p_close"][t]):
                 basis = self.basis
@@ -427,10 +427,12 @@ class Trader:
         self.tl.finalize_to(sec)
 
     def run(self):
-        log("paper trader started"); last_T = None
+        log("paper trader started"); last_T = None; t_start = time.time()
         while True:
             try:
                 now = time.time(); T = int(now) // 300 * 300 + 300          # next nominal open
+                if now - t_start < 60:
+                    self.finalize(); time.sleep(0.2); continue
                 self.finalize()
                 for Tx in (T, T + 300):
                     if now >= Tx - 150: self.feed_for(Tx)
@@ -459,6 +461,8 @@ class Trader:
                     feed = self.feed_for(T); mkt, _ = feed.last_up() if feed else (np.nan, None)
                     z5 = self.bp_z.get(T, {}).get("s5", np.nan)
                     agree = np.isfinite(z5) and np.sign(z5) == np.sign(p - 0.5)
+                    if not (np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95):
+                        log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} SKIP: implausible forecast (p0={fc.get('p0')}, p={p}) - data gap?"); continue
                     log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} p_close={p:.3f} bp_z5={z5:+.3f} agree={agree} market={mkt:.3f} ({fc['compute_s']}s)")
                     if np.isfinite(p) and abs(p - 0.5) >= CFG_A["thr"] and feed is not None and agree:
                         side = "UP" if p > 0.5 else "DOWN"
@@ -470,7 +474,7 @@ class Trader:
                     feed = self.feed_for(Tb); mkt, mts = feed.last_up() if feed else (np.nan, None)
                     self.ffc.write(json.dumps(dict(strategy="B", T=Tb, market=mkt, **fc)) + "\n"); self.ffc.flush()
                     log(f"[B] T={dt.datetime.fromtimestamp(Tb, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} p0={fc['p0']:.1f} now={fc['price_now']:.1f} ({fc['compute_s']}s)")
-                    if np.isfinite(p) and np.isfinite(mkt) and abs(p - mkt) >= CFG_B["delta"]:
+                    if np.isfinite(p) and np.isfinite(mkt) and np.isfinite(fc.get("p0", np.nan)) and abs(p - mkt) >= CFG_B["delta"]:
                         side = "UP" if p > mkt else "DOWN"; bid = mkt if side == "UP" else 1 - mkt
                         self.pending.append(dict(T=Tb, side=side, bid=bid, placed_ms=int(time.time() * 1000), until=time.time() + CFG_B["cancel"], p=p, mkt=mkt))
                         log(f"[B shadow] REST BID {side} @{bid:.3f} for {CFG_B['cancel']}s")
