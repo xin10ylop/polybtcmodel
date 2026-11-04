@@ -474,7 +474,9 @@ class Trader:
                     feed = self.feed_for(Tb); mkt, mts = feed.last_up() if feed else (np.nan, None)
                     self.ffc.write(json.dumps(dict(strategy="B", T=Tb, market=mkt, **fc)) + "\n"); self.ffc.flush()
                     log(f"[B] T={dt.datetime.fromtimestamp(Tb, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} p0={fc['p0']:.1f} now={fc['price_now']:.1f} ({fc['compute_s']}s)")
-                    if np.isfinite(p) and np.isfinite(mkt) and np.isfinite(fc.get("p0", np.nan)) and abs(p - mkt) >= CFG_B["delta"]:
+                    if not (np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95):
+                        log(f"[B] T={dt.datetime.fromtimestamp(Tb, dt.UTC):%H:%M} SKIP: implausible forecast (p0={fc.get('p0')}, p={p}) - data gap?"); continue
+                    if np.isfinite(p) and np.isfinite(mkt) and abs(p - mkt) >= CFG_B["delta"]:
                         side = "UP" if p > mkt else "DOWN"; bid = mkt if side == "UP" else 1 - mkt
                         self.pending.append(dict(T=Tb, side=side, bid=bid, placed_ms=int(time.time() * 1000), until=time.time() + CFG_B["cancel"], p=p, mkt=mkt))
                         log(f"[B] REST BID {side} @{bid:.3f} for {CFG_B['cancel']}s")
