@@ -210,15 +210,18 @@ def pm_prints(cond):
     return sorted(rows)
 
 
-def replay_exit(rec, prints, cfg):
-    cfg = dict(cfg, tp=rec.get("tp", cfg["tp"]), sl=rec.get("sl", cfg["sl"]), tstop=rec.get("tstop", cfg["tstop"]))   # the trade's own exits
-    side = rec["side"]; T = rec["T"]; fill = T + rec["fill_time"]
+def replay_exit(rec, prints, cfg, outcome=None):
+    cfg = dict(cfg, tp=rec.get("tp", cfg["tp"]), sl=rec.get("sl", cfg.get("sl")), tstop=rec.get("tstop", cfg.get("tstop")))   # the trade's own exits
+    side = rec["side"]; T = rec["T"]; fill = T + rec["fill_time"]; tstop = cfg["tstop"] if cfg["tstop"] is not None else 300
     for ts, up, sz in prints:
         if ts < fill - 1: continue
-        if ts > T + cfg["tstop"] + 3: break                    # the time-stop fires before later prints (history stamps lag the match by ~2 s)
+        if ts > T + tstop + 3: break                           # the time-stop fires before later prints (history stamps lag the match by ~2 s)
         ps = up if side == "UP" else 1 - up
         if ps >= cfg["tp"]: return "TP", ts - T, cfg["tp"], 0.0
-        if ps <= cfg["sl"]: return "SL", ts - T, ps - cfg["slip"], pt.fee(ps - cfg["slip"], cfg["fee"])
+        if cfg["sl"] is not None and ps <= cfg["sl"]: return "SL", ts - T, ps - cfg["slip"], pt.fee(ps - cfg["slip"], cfg["fee"])
+    if cfg["tstop"] is None:                                   # hold to settlement
+        if outcome is None: return "NONE", None, None, None
+        return "SETTLE", 300, 1.0 if (outcome == 1) == (side == "UP") else 0.0, 0.0
     last = [x for x in prints if x[0] <= T + cfg["tstop"]]
     if last:
         up = last[-1][1]; ps = (up if side == "UP" else 1 - up) - cfg["slip"]
@@ -243,10 +246,11 @@ def exits(day, trades, orders):
         if not cond: continue
         if cond not in cache: cache[cond] = pm_prints(cond)
         pr = cache[cond]; cfg = pt.CFGS.get(r["strategy"], pt.CFG_B)
-        kind, et, px, f = replay_exit(r, pr, cfg)
+        kind, et, px, f = replay_exit(r, pr, cfg, outcome=pt.get_outcome(r["T"]) if cfg.get("settle") else None)
         pnl = (px - r["entry"] - f) if px is not None else np.nan
         res["pnl_live"] += r["pnl"]; res["pnl_replay"] += (pnl if np.isfinite(pnl) else 0)
         tol = 0.10 if r["exit_kind"] == "TIME" else 0.02                   # time-stops sell at the live order-book bid, which prints cannot show
+        if kind == "SETTLE": et = r["exit_time"]                            # settlement has no exit instant
         same = kind == r["exit_kind"] and (et is None or abs(et - r["exit_time"]) <= 5) and (np.isfinite(pnl) and abs(pnl - r["pnl"]) <= tol)   # REST history has 1 s timestamps
         if not same:
             res["exit_mismatch"].append(dict(strategy=r["strategy"], T=r["T"], live=(r["exit_kind"], round(r["exit_time"], 1), round(r["pnl"], 3)), replay=(kind, et, None if not np.isfinite(pnl) else round(pnl, 3)), prints=len(pr)))

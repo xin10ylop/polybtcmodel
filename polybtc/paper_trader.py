@@ -26,10 +26,11 @@ PAPER = os.environ.get("PAPER_DIR") or os.path.join(REPO, "paper"); os.makedirs(
 LOG = open(os.path.join(PAPER, "paper.log"), "a")
 DAY = 86400
 CFG_B = dict(delta=0.12, cancel=10, tp=0.80, sl=0.10, tstop=240, slip=0.01, fee=0.07)
-CFG_A = dict(thr=0.05, entry=0.50, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=0.07)
+CFG_A = dict(thr=0.05, entry=0.50, tp=0.85, sl=None, tstop=None, settle=True, slip=0.01, fee=0.07)   # adopted 2026-11-04: TP 0.85, no stop, hold to settlement (research/settle_exit_A.py)
+CFG_A0 = dict(thr=0.05, entry=0.50, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=0.07)               # the previous frozen exits, kept as a shadow
 CFG_C = dict(delta=0.08, decide=-5, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=0.07)   # "B five seconds early": bid at the last print from T-5 until the open
 LAG = 30
-CFGS = {"A": CFG_A, "B": CFG_B, "C": CFG_C}
+CFGS = {"A": CFG_A, "A0": CFG_A0, "B": CFG_B, "C": CFG_C}
 
 
 def log(*a):
@@ -392,25 +393,30 @@ class Model:
 class Position:
     def __init__(self, strat, T, side, entry, fill_ms, cfg, p_model, market):
         self.strat, self.T, self.side, self.entry, self.fill_ms, self.cfg = strat, T, side, entry, fill_ms, cfg
-        self.p_model, self.market = p_model, market; self.open = True; self.rec = None
+        self.p_model, self.market = p_model, market; self.open = True; self.rec = None; self.last_poll = None
 
     def check(self, feed, now):
         """Exit logic on UP-equivalent prints of our side."""
-        cfg = self.cfg; sign = 1 if self.side == "UP" else -1
-        for ts, pu, tok, sz in feed.prints_since(self.fill_ms):
-            ps = pu if self.side == "UP" else 1 - pu
-            if ps >= cfg["tp"]:
-                return self.close(cfg["tp"], "TP", ts, maker=True)
-            if ps <= cfg["sl"]:
-                return self.close(ps - cfg["slip"], "SL", ts)
-        if now >= self.T + cfg["tstop"]:
-            bb = feed.best[self.side][0]
-            px = bb if np.isfinite(bb) else (feed.last_up()[0] if self.side == "UP" else 1 - feed.last_up()[0]) - cfg["slip"]
-            return self.close(px, "TIME", int(now * 1000))
+        cfg = self.cfg
+        if feed is not None:
+            for ts, pu, tok, sz in feed.prints_since(self.fill_ms):
+                ps = pu if self.side == "UP" else 1 - pu
+                if ps >= cfg["tp"]:
+                    return self.close(cfg["tp"], "TP", ts, maker=True)
+                if cfg.get("sl") is not None and ps <= cfg["sl"]:
+                    return self.close(ps - cfg["slip"], "SL", ts)
+            if cfg.get("tstop") is not None and now >= self.T + cfg["tstop"]:
+                bb = feed.best[self.side][0]
+                px = bb if np.isfinite(bb) else (feed.last_up()[0] if self.side == "UP" else 1 - feed.last_up()[0]) - cfg["slip"]
+                return self.close(px, "TIME", int(now * 1000))
+        if cfg.get("settle") and now >= self.T + 300 + 20 and (self.last_poll is None or now - self.last_poll > 30):   # resolution: 1.00 / 0.00, no fee
+            self.last_poll = now; out = get_outcome(self.T)
+            if out is not None:
+                return self.close(1.0 if (out == 1) == (self.side == "UP") else 0.0, "SETTLE", int((self.T + 300) * 1000), maker=True)
         return None
 
     def close(self, px, kind, ts, maker=False):
-        px = float(np.clip(px, 0.001, 0.999)); f = 0.0 if maker else fee(px, self.cfg["fee"])
+        px = float(np.clip(px, 0.0, 1.0)) if kind == "SETTLE" else float(np.clip(px, 0.001, 0.999)); f = 0.0 if maker else fee(px, self.cfg["fee"])
         self.open = False
         self.rec = dict(strategy=self.strat, T=self.T, side=self.side, p_model=self.p_model, market=self.market, entry=self.entry,
                         fill_time=self.fill_ms / 1000 - self.T, exit=px, exit_kind=kind, exit_time=ts / 1000 - self.T, fee=f, pnl=px - self.entry - f,
@@ -526,6 +532,7 @@ class Trader:
                     if action.startswith("BUY"):
                         side = action[4:]
                         self.positions.append(Position("A", T, side, CFG_A["entry"], int((T - 45) * 1000), CFG_A, p, mkt)); log(f"[A] BUY {side} @0.50 (assumed pre-open fill)")
+                        self.positions.append(Position("A0", T, side, CFG_A0["entry"], int((T - 45) * 1000), CFG_A0, p, mkt))   # shadow with the previous exits
                 # ---- strategy B decision at T (bars through T-1 final at ~T+1.5)
                 if T - 300 + 1.6 <= now < T - 300 + 10 and ("B", T - 300) not in self.done and self.tl.known >= (T - 300) - self.tl.t0_epoch:   # skip stale windows after a restart
                     Tb = T - 300; self.done.add(("B", Tb))
@@ -561,7 +568,7 @@ class Trader:
                 # ---- open positions
                 for pos in list(self.positions):
                     feed = self.feeds.get(pos.T)
-                    if feed is None: continue
+                    if feed is None and not pos.cfg.get("settle"): continue
                     rec = pos.check(feed, time.time())
                     if rec:
                         self.positions.remove(pos); self.ftrade.write(json.dumps(rec) + "\n"); self.ftrade.flush()

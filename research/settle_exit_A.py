@@ -38,8 +38,11 @@ def run(tp=None, sl=None, tstop=None, settle=True):
     return pnl, kind
 pers = {"Aug1-19": dates < "2026-08-20", "tune": (dates >= "2026-08-20") & (dates <= "2026-09-30"), "test": dates >= "2026-10-01"} if LABEL == "main" else {"July": np.ones(len(dates), bool)}
 base, _ = run(tp=0.80, sl=0.05, tstop=240)
-rules = [("frozen: TP .80 / SL .05 / T+240", dict(tp=0.80, sl=0.05, tstop=240)), ("hold to settlement, no exits", dict()), ("TP .80, then settle (no stop, no time-stop)", dict(tp=0.80)),
-         ("TP .80 + SL .05, then settle (no time-stop)", dict(tp=0.80, sl=0.05)), ("TP .90, then settle", dict(tp=0.90)), ("TP .95, then settle", dict(tp=0.95)), ("TP .80 + SL .05 + T+290 (sell at the last print)", dict(tp=0.80, sl=0.05, tstop=290))]
+rules = [("frozen: TP .80 / SL .05 / T+240", dict(tp=0.80, sl=0.05, tstop=240)), ("hold to settlement, no exits", dict())]
+for tp in (0.70, 0.75, 0.80, 0.85, 0.90, 0.95):
+    rules.append((f"TP {tp:.2f}, then settle", dict(tp=tp)))
+    rules.append((f"TP {tp:.2f} + SL .05, then settle", dict(tp=tp, sl=0.05)))
+    rules.append((f"TP {tp:.2f} + SL .10, then settle", dict(tp=tp, sl=0.10)))
 rows = []
 for lab, kw in rules:
     pnl, kind = run(**kw); r = {"rule": lab}

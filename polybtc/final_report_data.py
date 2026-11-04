@@ -53,13 +53,19 @@ print(grid[(grid.tp == 0.65) & (grid.sl == 0.30) & (grid.tstop == 290)][["delta"
 
 # ---------------------------------------------------------------- locked configs
 # frozen live rule (README): m2 close head |p-0.5| >= 0.05, btc-predict 5-min z at T-60 agreeing in sign, TP 0.80 / SL 0.05 / T+240
-CFG_A = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.50, "signal": "m2_-45_close_p", "agree": "bp_-60_z_s5", "thr": 0.05, "tp": 0.80, "sl": 0.05, "tstop": 240}
+CFG_A = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.50, "signal": "m2_-45_close_p", "agree": "bp_-60_z_s5", "thr": 0.05, "tp": 0.85, "sl": None, "tstop": None, "settle": True}
+CFG_A0 = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.50, "signal": "m2_-45_close_p", "agree": "bp_-60_z_s5", "thr": 0.05, "tp": 0.80, "sl": 0.05, "tstop": 240}   # previous frozen exits (shadow)
 CFG_B = dict(fs.CFG_B); CFG_B2 = dict(fs.CFG_B2); CFG_C = dict(fs.CFG_C)
 
 
 def trades_A2(cfg, master, mk, g):
-    sim = polysim.simulate(mk, g, t_entry=cfg["fill_by"], entry_mode="fixed", pe=cfg["entry_price"], tps=(cfg["tp"],), sls=(cfg["sl"],), tstops=(cfg["tstop"],), slip=cfg.get("slip", 0.01))
+    settle = cfg.get("settle", False)
+    sim = polysim.simulate(mk, g, t_entry=cfg["fill_by"], entry_mode="fixed", pe=cfg["entry_price"], tps=(cfg["tp"],), sls=(0.0 if settle else cfg["sl"],), tstops=(300 if settle else cfg["tstop"],), slip=cfg.get("slip", 0.01))
     m, sim = ex.align(master, sim)
+    if settle:   # no stop, no time-stop: whatever did not reach the take-profit is held to settlement (1.00 / 0.00, no fee)
+        idx = np.arange(len(m))
+        for sd in (0, 1):
+            k = sim["kind"][idx, sd, 0, 0, 0]; sim["pnl"][idx, sd, 0, 0, 0] = np.where(k == 0, cfg["tp"] - cfg["entry_price"], sim["settle"][idx, sd]); sim["kind"][idx, sd, 0, 0, 0] = np.where(k == 0, 0, 2)
     p = m[cfg["signal"]].values; side = np.where(p > 0.5, 0, 1)
     sel = np.isfinite(p) & (np.abs(p - 0.5) >= cfg["thr"])
     if cfg.get("agree"):
@@ -68,7 +74,7 @@ def trades_A2(cfg, master, mk, g):
 fs.trades_A = trades_A2
 summary = {}
 recs = {}
-for nm, cfg in (("A_preopen", CFG_A), ("B_open_mispricing", CFG_B), ("B2_open_mispricing_delta008", CFG_B2), ("C_preopen_follow", CFG_C)):
+for nm, cfg in (("A_preopen", CFG_A), ("A0_preopen_frozen_exits", CFG_A0), ("B_open_mispricing", CFG_B), ("B2_open_mispricing_delta008", CFG_B2), ("C_preopen_follow", CFG_C)):
     res, rec = fs.evaluate(cfg, label=nm)
     summary[nm] = {"config": cfg, "results": res.round(5).to_dict()}
     rec.to_csv(f"{OUT}/trades_{nm}.csv", index=False); recs[nm] = rec
