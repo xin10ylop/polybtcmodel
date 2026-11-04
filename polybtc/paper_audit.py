@@ -9,6 +9,7 @@ Sections
                 B: |p - market| >= 0.12 -> bid; filled -> trade), from forecasts.jsonl / orders.jsonl / paper_trades.jsonl
   3. parity     the live forecasts are recomputed offline from the archive data for the same seconds (btcmovement2 close
                 head and btc-predict z); differences come only from the live feeds (REST/websocket spot, OKX perp proxy)
+  5. latency    decision delay, model compute time, feed freshness at each decision, B bid placement time
   4. exits      every trade's exit is replayed on Polymarket's own trade history (REST) and compared with what the
                 websocket feed produced; B maker fills are replayed the same way; A pre-open fill plausibility is reported
 Writes PAPER_DIR/audit_<day>.json with the numbers.
@@ -264,6 +265,34 @@ def exits(day, trades, orders):
     return res
 
 
+# ------------------------------------------------------------------------------------ 5. latency
+def latency(day, fcs, orders):
+    """Timing at every decision: how late after the scheduled instant, model compute time, and how fresh each feed was."""
+    t0, t1 = day_bounds(day)
+    rec = [r for r in fcs if t0 <= r["T"] < t1 and "decision_delay" in r]
+    res = {"decisions_with_timing": len(rec)}
+    if not rec:
+        print("latency: no decision records with timing fields yet (recorded from the version with latency instrumentation on)"); return res
+    df = pd.DataFrame(rec)
+    def q(x): x = pd.to_numeric(x, errors="coerce").dropna(); return (f"median {x.median():.2f}s  p95 {x.quantile(.95):.2f}s  max {x.max():.2f}s" if len(x) else "n/a")
+    for k, lab in (("decision_delay", "decision after scheduled instant"), ("compute_s", "model compute"), ("spot_lag", "spot feed age (last bar)"), ("perp_lag", "perp feed age (last trade)"), ("pm_age", "Polymarket feed age (last print)")):
+        if k in df:
+            print(f"latency {lab:34s}: {q(df[k])}"); x = pd.to_numeric(df[k], errors="coerce").dropna(); res[k] = dict(median=float(x.median()), p95=float(x.quantile(.95)), max=float(x.max())) if len(x) else None
+    stale = df[pd.to_numeric(df.get("spot_lag"), errors="coerce") > 3] if "spot_lag" in df else df.iloc[0:0]
+    res["decisions_on_stale_spot"] = int(len(stale))
+    print(f"latency decisions made on a stale spot feed (> 3 s, forward-filled): {len(stale)}" + (f"  e.g. {[dt.datetime.fromtimestamp(t, dt.UTC).strftime('%H:%M') for t in stale['T'].head(5)]}" if len(stale) else ""))
+    pl = [o for o in orders if t0 <= o["T"] < t1 and o["event"] == "placed" and "placed_delay" in o]
+    if pl:
+        x = pd.Series([o["placed_delay"] for o in pl]); res["B_bid_placed_after_open"] = dict(median=float(x.median()), max=float(x.max()), n=len(x))
+        print(f"latency B bid placed after the open       : {q(x)}  (n={len(x)})")
+    b = df[df.strategy == "B"]
+    if "market_preT" in b and len(b):
+        d = (pd.to_numeric(b["market"], errors="coerce") - pd.to_numeric(b["market_preT"], errors="coerce")).dropna()
+        res["B_market_move_T_to_decision"] = dict(mean_abs=float(d.abs().mean()), max_abs=float(d.abs().max()), n=int(len(d)))
+        print(f"latency B market move between the last pre-open print (backtest price) and the price used live: mean |d| {d.abs().mean():.3f}, max {d.abs().max():.3f} (n={len(d)})")
+    return res
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--day", default=(dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)).isoformat())
@@ -272,7 +301,7 @@ if __name__ == "__main__":
     a = ap.parse_args(); day = dt.date.fromisoformat(a.day)
     fcs, trades, orders = load_jsonl("forecasts.jsonl"), load_jsonl("paper_trades.jsonl"), load_jsonl("orders.jsonl")
     print(f"== paper audit {day}  (PAPER_DIR={PAPER})")
-    out = {"day": a.day, "coverage": coverage(day, fcs), "rules": rules(day, fcs, trades, orders)}
+    out = {"day": a.day, "coverage": coverage(day, fcs), "rules": rules(day, fcs, trades, orders), "latency": latency(day, fcs, orders)}
     if not a.no_exits: out["exits"] = exits(day, trades, orders)
     if not a.no_replay: out["parity"] = parity(day, fcs, a.sample, a.force_rest)
     json.dump(out, open(os.path.join(PAPER, f"audit_{a.day}.json"), "w"), indent=1, default=str)

@@ -50,6 +50,7 @@ class LiveTimeline:
         for k in ("s_open", "s_high", "s_low", "s_close", "p_open", "p_high", "p_low", "p_close", "p_vwap"):
             self.a[k][:] = np.nan
         self.known = 0                      # seconds [0, known) are final
+        self.last_spot_sec = None; self.last_perp_sec = None   # last bar actually received from each feed
         self.lock = threading.Lock()
         self.perp_pending = {}              # second -> partial perp bar
 
@@ -429,6 +430,17 @@ class Trader:
         self.ftrade = open(os.path.join(PAPER, "paper_trades.jsonl"), "a"); self.ffc = open(os.path.join(PAPER, "forecasts.jsonl"), "a")
         self.forder = open(os.path.join(PAPER, "orders.jsonl"), "a")
 
+    def lat(self, scheduled, feed=None):
+        """Feed freshness and timing at a decision: seconds since the last received spot bar / perp trade / Polymarket print, and how late the decision is."""
+        now = time.time(); tl = self.tl
+        d = dict(decision_delay=round(now - scheduled, 2),
+                 spot_lag=round(now - (tl.last_spot_sec + 1), 2) if tl.last_spot_sec else None,
+                 perp_lag=round(now - (tl.last_perp_sec + 1), 2) if tl.last_perp_sec else None)
+        if feed is not None:
+            _, ts = feed.last_up(); d["pm_age"] = round(now - ts / 1000, 2) if ts else None
+        if d["spot_lag"] is not None and d["spot_lag"] > 3: log(f"STALE spot feed at decision: last bar {d['spot_lag']:.1f}s old (forward-filled)")
+        return d
+
     def feed_for(self, T):
         if T not in self.feeds:
             tk = get_tokens(T)
@@ -479,7 +491,7 @@ class Trader:
                         um = dict(o=v("p_open"), h=v("p_high"), l=v("p_low"), c=v("p_close"), v=v("p_buy") + v("p_sell"), qv=v("p_qv"), n=v("p_ntr"), bv=v("p_buy"), nb=v("p_nb"), lbv=v("p_lbv"), lsv=v("p_lsv"), mxq=v("p_maxq"))
                         eth = dict(c=v("e_c"), v=v("e_v"), bv=v("e_bv"))
                         tb = time.time(); z, ts_last = self.bp.forecast(spot, um, eth, lo); self.bp_z[T] = z
-                        log(f"[bp] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} z_s5={z['s5']:+.3f} z_s1={z['s1']:+.3f} (bar {ts_last:%H:%M}, {time.time()-tb:.1f}s)")
+                        log(f"[bp] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} z_s5={z['s5']:+.3f} z_s1={z['s1']:+.3f} (bar {ts_last:%H:%M}, {time.time()-tb:.1f}s, spot lag {self.lat(T - 58)['spot_lag']}s)")
                     except Exception as e:
                         log("bp error", repr(e)[:200])
                 # ---- strategy A decision at T-45 (bars through T-46 final at ~T-44)
@@ -490,7 +502,7 @@ class Trader:
                     agree = bool(np.isfinite(z5) and np.sign(z5) == np.sign(p - 0.5))
                     plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)
                     action = "skip" if not plausible else ("BUY " + ("UP" if p > 0.5 else "DOWN") if abs(p - 0.5) >= CFG_A["thr"] and feed is not None and agree else "none")
-                    self.ffc.write(json.dumps(dict(strategy="A", T=T, ts=round(time.time(), 2), market=mkt, z_s5=z5, agree=agree, action=action, **fc)) + "\n"); self.ffc.flush()
+                    self.ffc.write(json.dumps(dict(strategy="A", T=T, ts=round(time.time(), 2), market=mkt, z_s5=z5, agree=agree, action=action, **self.lat(T - 43.5, feed), **fc)) + "\n"); self.ffc.flush()
                     if not plausible:
                         log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} SKIP: implausible forecast (p0={fc.get('p0')}, p={p}) - data gap?"); continue
                     log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} p_close={p:.3f} bp_z5={z5:+.3f} agree={agree} market={mkt:.3f} ({fc['compute_s']}s)")
@@ -504,14 +516,15 @@ class Trader:
                     feed = self.feed_for(Tb); mkt, mts = feed.last_up() if feed else (np.nan, None)
                     plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)
                     action = "skip" if not plausible else ("BID " + ("UP" if p > mkt else "DOWN") if np.isfinite(mkt) and abs(p - mkt) >= CFG_B["delta"] else "none")
-                    self.ffc.write(json.dumps(dict(strategy="B", T=Tb, ts=round(time.time(), 2), market=mkt, action=action, **fc)) + "\n"); self.ffc.flush()
+                    mkt_preT = feed.last_up(before_ms=Tb * 1000)[0] if feed else np.nan
+                    self.ffc.write(json.dumps(dict(strategy="B", T=Tb, ts=round(time.time(), 2), market=mkt, market_preT=mkt_preT, action=action, **self.lat(Tb + 1.6, feed), **fc)) + "\n"); self.ffc.flush()
                     log(f"[B] T={dt.datetime.fromtimestamp(Tb, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} p0={fc['p0']:.1f} now={fc['price_now']:.1f} ({fc['compute_s']}s)")
                     if not plausible:
                         log(f"[B] T={dt.datetime.fromtimestamp(Tb, dt.UTC):%H:%M} SKIP: implausible forecast (p0={fc.get('p0')}, p={p}) - data gap?"); continue
                     if action.startswith("BID"):
                         side = action[4:]; bid = mkt if side == "UP" else 1 - mkt
                         self.pending.append(dict(T=Tb, side=side, bid=bid, placed_ms=int(time.time() * 1000), until=time.time() + CFG_B["cancel"], p=p, mkt=mkt))
-                        self.forder.write(json.dumps(dict(T=Tb, side=side, bid=bid, placed=round(time.time(), 2), event="placed")) + "\n"); self.forder.flush()
+                        self.forder.write(json.dumps(dict(T=Tb, side=side, bid=bid, placed=round(time.time(), 2), placed_delay=round(time.time() - Tb, 2), event="placed")) + "\n"); self.forder.flush()
                         log(f"[B] REST BID {side} @{bid:.3f} for {CFG_B['cancel']}s")
                 # ---- pending maker orders
                 for o in list(self.pending):
