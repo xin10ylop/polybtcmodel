@@ -11,7 +11,7 @@ Fee (crypto_fees_v2, from the market metadata): fee per share = rate * p * (1 - 
 import numpy as np, pandas as pd, glob, os
 
 TRADES = "/home/user/data/polymarket/trades"
-MARKETS = "/home/user/data/polymarket/markets.parquet"
+MARKETS = os.environ.get("POLY_MARKETS", "/home/user/data/polymarket/markets.parquet")
 FEE_RATE = 0.07
 
 

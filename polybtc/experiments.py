@@ -8,8 +8,8 @@ import polysim, strategy_eval as se
 warnings.filterwarnings("ignore")
 pd.set_option("display.width", 250)
 TUNE, TEST = se.TUNE, se.TEST
-master = pd.read_parquet("/home/user/data/master.parquet")
-mk, g = polysim.load_windows()
+master = pd.read_parquet(os.environ.get("MASTER_PATH", "/home/user/data/master.parquet"))
+mk, g = polysim.load_windows(days=os.environ["POLY_DAYS"].split(",") if os.environ.get("POLY_DAYS") else None)   # POLY_DAYS limits the trade files loaded
 
 
 def logit(p): p = np.clip(p, 1e-4, 1 - 1e-4); return np.log(p / (1 - p))

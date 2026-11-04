@@ -4,7 +4,7 @@ Output: /home/user/data/truth/windows.parquet, /home/user/data/truth/paths.npy (
 """
 import os, sys, glob, datetime as dt
 import numpy as np, pandas as pd
-DAYS = "/home/user/data/days"; OUT = "/home/user/data/truth"; os.makedirs(OUT, exist_ok=True)
+DAYS = "/home/user/data/days"; OUT = os.environ.get("TRUTH_DIR", "/home/user/data/truth"); os.makedirs(OUT, exist_ok=True)
 PRE, POST = 120, 300
 
 def main(start, end):

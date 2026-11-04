@@ -1,6 +1,8 @@
 """One row per Polymarket window: outcome, Binance truth, regime descriptors, and every model forecast
 (wide: <model>_<offset>_<column>). Output: /home/user/data/master.parquet"""
-import numpy as np, pandas as pd, glob, sys
+import numpy as np, pandas as pd, glob, sys, os
+TRUTH = os.environ.get("TRUTH_DIR", "/home/user/data/truth"); MARKETS = os.environ.get("POLY_MARKETS", "/home/user/data/polymarket/markets.parquet")
+BP = os.environ.get("BP_MINUTE", "/home/user/data/forecasts/bp_minute.parquet"); MASTER_OUT = os.environ.get("MASTER_OUT", "/home/user/data/master.parquet")
 OFFS_PRE = [-120, -90, -75, -60, -50, -45, -40, -35, -30]
 OFFS_POST = [-25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 30, 45, 60, 90, 120, 150, 180, 210, 240, 260]
 M2_COLS = ["h10_p", "h10_pup_now", "h10_mu", "h15_pup_now", "h30_p", "h30_pup_now", "h30_mu", "h60_p", "h60_pup_now", "h60_mu",
@@ -23,9 +25,9 @@ def wide(prefix, cols, offs):
     w.columns = [f"{prefix}_{d}_{c}" for c, d in w.columns]
     return w
 
-tw = pd.read_parquet("/home/user/data/truth/windows.parquet").set_index("T")
-paths = np.load("/home/user/data/truth/paths.npy")         # cols T-120..T+300
-mk = pd.read_parquet("/home/user/data/polymarket/markets.parquet").set_index("window_start")
+tw = pd.read_parquet(f"{TRUTH}/windows.parquet").set_index("T")
+paths = np.load(f"{TRUTH}/paths.npy")         # cols T-120..T+300
+mk = pd.read_parquet(MARKETS).set_index("window_start")
 mk = mk[mk.outcome_up_price.isin([0.0, 1.0])]
 m = tw.join(mk[["outcome_up_price", "price_to_beat", "volume"]], how="inner")
 m["up"] = (m.outcome_up_price == 1.0).astype(int)
@@ -52,8 +54,7 @@ for pre, cols in (("m2", M2_COLS), ("bm", BM_COLS)):
     if w is not None:
         m = m.join(w, how="left")
         print(pre, "joined", w.shape)
-bp = "/home/user/data/forecasts/bp_minute.parquet"
-import os
+bp = BP
 if os.path.exists(bp):
     b = pd.read_parquet(bp); b["T"] = ((pd.DatetimeIndex(b.ts).tz_localize(None) - pd.Timestamp("1970-01-01")) // pd.Timedelta("1s") + 60).astype(np.int64)  # forecast instant
     zc = [c for c in b.columns if c.startswith("z_")]
@@ -62,6 +63,6 @@ if os.path.exists(bp):
         bb.columns = [f"bp_{off}_{c}" for c in bb.columns]
         m = m.join(bb, how="left")
     print("bp joined")
-m.to_parquet("/home/user/data/master.parquet")
+m.to_parquet(MASTER_OUT)
 print(m.shape, m.index.min(), m.index.max()); print(m[["up", "up_binance_eff", "x_eff_bps", "vol_prev5m_bp"]].describe().round(3))
 print("agreement Polymarket outcome vs Binance effective label:", (m.up == m.up_binance_eff).mean().round(4))
