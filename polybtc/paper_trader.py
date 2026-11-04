@@ -477,7 +477,7 @@ class Trader:
                     if np.isfinite(p) and np.isfinite(mkt) and np.isfinite(fc.get("p0", np.nan)) and abs(p - mkt) >= CFG_B["delta"]:
                         side = "UP" if p > mkt else "DOWN"; bid = mkt if side == "UP" else 1 - mkt
                         self.pending.append(dict(T=Tb, side=side, bid=bid, placed_ms=int(time.time() * 1000), until=time.time() + CFG_B["cancel"], p=p, mkt=mkt))
-                        log(f"[B shadow] REST BID {side} @{bid:.3f} for {CFG_B['cancel']}s")
+                        log(f"[B] REST BID {side} @{bid:.3f} for {CFG_B['cancel']}s")
                 # ---- pending maker orders
                 for o in list(self.pending):
                     feed = self.feeds.get(o["T"]); filled = None
@@ -487,9 +487,9 @@ class Trader:
                             if ps <= o["bid"] + 1e-9: filled = ts; break
                     if filled:
                         self.pending.remove(o); self.positions.append(Position("B", o["T"], o["side"], o["bid"], filled, CFG_B, o["p"], o["mkt"]))
-                        log(f"[B shadow] FILLED {o['side']} @{o['bid']:.3f} at T+{filled/1000 - o['T']:.1f}s")
+                        log(f"[B] FILLED {o['side']} @{o['bid']:.3f} at T+{filled/1000 - o['T']:.1f}s")
                     elif time.time() > o["until"]:
-                        self.pending.remove(o); log(f"[B shadow] cancelled unfilled bid {o['side']} @{o['bid']:.3f}")
+                        self.pending.remove(o); log(f"[B] cancelled unfilled bid {o['side']} @{o['bid']:.3f}")
                 # ---- open positions
                 for pos in list(self.positions):
                     feed = self.feeds.get(pos.T)
@@ -520,6 +520,7 @@ def summary():
     for s, g in t.groupby("strategy"):
         print(f"\n== strategy {s}: {len(g)} trades, mean pnl/share {g.pnl.mean():+.4f}, win {np.mean(g.pnl > 0):.2%}, total {g.pnl.sum():+.3f}, "
               f"settle-equivalent {g.settle_pnl.mean():+.4f} | exits {g.exit_kind.value_counts().to_dict()}")
+    print(f"\n== A + B combined: {len(t)} trades, total {t.pnl.sum():+.3f} per share; at $100 per trade: ${(t.pnl / t.entry * 100).sum():+.0f}")
     print(t.tail(15)[["strategy", "T", "side", "p_model", "market", "entry", "fill_time", "exit_kind", "exit_time", "exit", "pnl", "resolved_up"]].round(3).to_string(index=False))
 
 

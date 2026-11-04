@@ -192,7 +192,7 @@ Polymarket CLOB market websocket (prints and books). Model history from the loca
 live feature path is parity-tested against training (`python polybtc/bp_live.py`). Logs: `paper/forecasts.jsonl`
 (every window), `paper/paper_trades.jsonl`, `paper/paper.log`; `python polybtc/paper_trader.py --summary`
 prints P&L with resolutions. Strategy A is simulated with the user's execution assumption (filled at 0.50
-before T−40); strategy B is logged as a shadow (its maker fills cannot be verified in paper mode).
+before T−40); strategy B's buy limit counts as filled when a print at or below the bid occurs within 10 s (queue position ignored). Both are reported with equal weight.
 
 Running it on your own box: `scripts/setup_box.sh` (clones the four repos under `/home/user`, installs, pulls
 10 days of Binance archive history, starts the trader in an auto-restart loop). Check first that
