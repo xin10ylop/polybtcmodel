@@ -31,3 +31,18 @@ for nm, f in {"flow agrees (>0)": flow_side > 0, "flow disagrees": flow_side < 0
     for s, sp in ((tune, "tune"), (test, "test")):
         x = t.pnl.values[f & s]; r.append(f"{sp}: n={len(x)} mean={x.mean()*100:+.2f}¢ win={np.mean(x>0):.3f}")
     print(f"{nm:20s} " + " | ".join(r))
+
+# ---- combined with the btc-predict agreement filter (live rule) + paired day bootstrap
+m = pd.read_parquet("/home/user/data/master.parquet", columns=["bp_-60_z_s5", "m2_-45_close_p"]).reindex(t.index)
+agree = (np.sign(m["bp_-60_z_s5"].values) == np.sign(m["m2_-45_close_p"].values - 0.5))
+old = (t.date < "2026-08-20").values
+print("\n== with the live agreement filter ==")
+rng = np.random.default_rng(0)
+for nm, f in {"agreement only (live)": agree, "agreement + flow agrees": agree & (flow_side > 0), "agreement + flow not against (>= 0 or no prints)": agree & ~(flow_side < 0),
+              "agreement + imbalance > +0.2": agree & (imb > 0.2)}.items():
+    out = []
+    for s, sp in ((old, "old"), (tune, "tune"), (test, "test")):
+        x = t.pnl.values[f & s]; d_all = pd.Series(np.where(f & s, t.pnl.values, 0.0)).groupby(t.date.values).sum(); d_base = pd.Series(np.where(agree & s, t.pnl.values, 0.0)).groupby(t.date.values).sum()
+        days = np.unique(t.date.values[s]); diff = (d_all - d_base).reindex(days).values; b = [np.mean(diff[rng.integers(0, len(diff), len(diff))]) for _ in range(2000)]
+        out.append(f"{sp}: n={len(x)} mean={x.mean()*100:+.2f}¢ win={np.mean(x>0):.3f} Δ/day={diff.mean()*100:+.1f}¢ p={np.mean(np.array(b)<=0):.2f}")
+    print(f"{nm:48s} " + " | ".join(out))
