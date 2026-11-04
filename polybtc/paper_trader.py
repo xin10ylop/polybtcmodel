@@ -22,7 +22,7 @@ from btcmodel.predictor import Predictor
 from btcmodel.regime import regime_features
 import score_m2 as S
 
-PAPER = os.path.join(REPO, "paper"); os.makedirs(PAPER, exist_ok=True)
+PAPER = os.environ.get("PAPER_DIR") or os.path.join(REPO, "paper"); os.makedirs(PAPER, exist_ok=True)   # PAPER_DIR=... keeps box logs out of git
 LOG = open(os.path.join(PAPER, "paper.log"), "a")
 DAY = 86400
 CFG_B = dict(delta=0.12, cancel=10, tp=0.80, sl=0.10, tstop=240, slip=0.01, fee=0.07)

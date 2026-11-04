@@ -11,6 +11,7 @@ sudo mkdir -p /home/user && sudo chown "$USER" /home/user
 cd /home/user
 for r in btc-predict btc-movement btcmovement2; do [ -d $r ] || git clone $GH/$r.git; done        # model repos: default branch
 [ -d polybtcmodel ] || git clone -b $BR $GH/polybtcmodel.git
+git -C polybtcmodel pull -q                                         # this copy is the one that runs
 sudo apt-get install -y -qq python3-venv python3-full > /dev/null
 [ -d /home/user/venv ] || python3 -m venv /home/user/venv
 PY=/home/user/venv/bin/python3
@@ -20,7 +21,11 @@ echo "== 10 days of Binance archive history (spot, ETH, perp) in every format th
 START=$(date -u -d "11 days ago" +%F); END=$(date -u -d "yesterday" +%F)
 $PY polybtcmodel/scripts/fetch_binance.py $START $END 4
 BTC_DATA_DIR=/home/user/data $PY -c "import sys; sys.path.insert(0,'/home/user/btcmovement2'); from btcmodel.timeline import build_timeline; build_timeline()"
-echo "== start the paper trader (auto-restart loop, logs in /home/user/polybtcmodel/paper/)"
+echo "== start the paper trader (auto-restart loop, logs in /home/user/paper/, outside git)"
+export PAPER_DIR=/home/user/paper; mkdir -p $PAPER_DIR
 cd /home/user/polybtcmodel
-nohup bash -c 'while true; do /home/user/venv/bin/python3 -W ignore polybtc/paper_trader.py >> paper/stdout.log 2>&1; echo "trader exited $(date -u)" >> paper/stdout.log; sleep 5; done' > /dev/null 2>&1 &
-echo "running. tally:  /home/user/venv/bin/python3 polybtc/paper_trader.py --summary     log: tail -f paper/paper.log"
+for pid in $(ps -eo pid,cmd | awk '/[p]aper_trader.py/ {print $1}'); do kill $pid; done; sleep 2    # one trader only
+nohup bash -c 'while true; do /home/user/venv/bin/python3 -W ignore polybtc/paper_trader.py >> $PAPER_DIR/stdout.log 2>&1; echo "trader exited $(date -u)" >> $PAPER_DIR/stdout.log; sleep 5; done' > /dev/null 2>&1 &
+sleep 3; tail -3 $PAPER_DIR/paper.log
+echo "running.  log:   tail -f /home/user/paper/paper.log"
+echo "          tally: PAPER_DIR=/home/user/paper /home/user/venv/bin/python3 /home/user/polybtcmodel/polybtc/paper_trader.py --summary"
