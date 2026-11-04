@@ -191,6 +191,11 @@ live feature path is parity-tested against training (`python polybtc/bp_live.py`
 prints P&L with resolutions. Strategy A is simulated with the user's execution assumption (filled at 0.50
 before T−40); strategy B is logged as a shadow (its maker fills cannot be verified in paper mode).
 
-Model-improvement experiments in progress (accepted only if tune and test both improve with the frozen
-configuration): btcmovement2 refit on 2025 → Jul 2026 (`scripts/refit_m2.sh`), btc-predict + Coinbase
-premium (`scripts/train_bp_cb.py`).
+Model-improvement experiments (accepted only if tune and test both improve with the frozen configuration):
+
+| experiment | result | verdict |
+|---|---|---|
+| btc-predict + Coinbase premium (`scripts/train_bp_cb.py`, `scripts/eval_bp_cb.py`) | better on Binance metrics (5-min IC 0.043 → 0.049) but no gain vs the Polymarket outcome (AUC 0.514/0.526 vs 0.514/0.528); agreement filter worse on tune; paired bootstrap CI includes 0 | rejected |
+| direct LightGBM on the TWAP-sign target, 3 months (`research/direct_twap_model.py`) | AUC 0.51–0.52 vs 0.52–0.53 for the frozen head | rejected |
+| regime filters (`research/edge_drivers_A.py`, `research/regime_filters_A.py`) | quiet windows: test +4.4¢ (5/31 negative days) but tune unchanged; counter-trend: small gains on both | not adopted; regime flags logged live for prospective validation |
+| btcmovement2 refit on 2025 → Jul 2026 (`scripts/refit_m2.sh`, `scripts/train_m2_wf.py`, `scripts/score_m2_new.py`) | in progress | — |
