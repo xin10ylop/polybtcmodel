@@ -52,7 +52,8 @@ print("\n-- user's tight exits 0.60-ish: closest cell tp0.65/sl0.30 --")
 print(grid[(grid.tp == 0.65) & (grid.sl == 0.30) & (grid.tstop == 290)][["delta", "n_tune", "mean_tune", "n_test", "mean_test", "win_test"]].round(4).to_string(index=False))
 
 # ---------------------------------------------------------------- locked configs
-CFG_A = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.50, "signal": "m2_-45_close_p", "thr": 0.05, "tp": 0.80, "sl": 0.20, "tstop": 240}
+# frozen live rule (README): m2 close head |p-0.5| >= 0.05, btc-predict 5-min z at T-60 agreeing in sign, TP 0.80 / SL 0.05 / T+240
+CFG_A = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.50, "signal": "m2_-45_close_p", "agree": "bp_-60_z_s5", "thr": 0.05, "tp": 0.80, "sl": 0.05, "tstop": 240}
 CFG_B = dict(fs.CFG_B); CFG_B2 = dict(fs.CFG_B2)
 
 
@@ -61,6 +62,8 @@ def trades_A2(cfg, master, mk, g):
     m, sim = ex.align(master, sim)
     p = m[cfg["signal"]].values; side = np.where(p > 0.5, 0, 1)
     sel = np.isfinite(p) & (np.abs(p - 0.5) >= cfg["thr"])
+    if cfg.get("agree"):
+        z = m[cfg["agree"]].values; sel &= np.isfinite(z) & (np.sign(z) == np.sign(p - 0.5))
     return m, sim, p, side, sel, {}
 fs.trades_A = trades_A2
 summary = {}

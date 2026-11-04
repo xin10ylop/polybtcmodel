@@ -89,7 +89,7 @@ def robustness(cfg, label=""):
 
 
 CFG_A = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.50, "stack_cols": ["m2_-45_close_p", "bm_-45_close_p", "bp_-60_z_s5"],
-         "thr": 0.05, "tp": 0.75, "sl": 0.20, "tstop": 240}
+         "thr": 0.05, "tp": 0.80, "sl": 0.05, "tstop": 240}   # exits per the exhaustive grids (README); live rule in final_report_data.py / paper_trader.py
 CFG_B = {"kind": "B", "decision_offset": 0, "cancel": 10, "delta": 0.12, "tp": 0.80, "sl": 0.10, "tstop": 240}
 CFG_B2 = {"kind": "B", "decision_offset": 0, "cancel": 10, "delta": 0.08, "tp": 0.80, "sl": 0.10, "tstop": 240}
 
