@@ -212,6 +212,7 @@ def replay_exit(rec, prints, cfg):
     side = rec["side"]; T = rec["T"]; fill = T + rec["fill_time"]
     for ts, up, sz in prints:
         if ts < fill - 1: continue
+        if ts > T + cfg["tstop"]: break                        # the time-stop fires before any later print
         ps = up if side == "UP" else 1 - up
         if ps >= cfg["tp"]: return "TP", ts - T, cfg["tp"], 0.0
         if ps <= cfg["sl"]: return "SL", ts - T, ps - cfg["slip"], pt.fee(ps - cfg["slip"], cfg["fee"])
