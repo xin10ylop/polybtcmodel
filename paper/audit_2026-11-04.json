@@ -1,0 +1,102 @@
+{
+ "day": "2026-11-04",
+ "coverage": {
+  "windows_in_day": 288,
+  "first_seen": "10:45",
+  "last_seen": "14:15",
+  "A_records": 35,
+  "B_records": 39,
+  "gaps": [
+   [
+    1793796600,
+    1793797200
+   ],
+   [
+    1793800800,
+    1793800800
+   ]
+  ],
+  "late_A": [],
+  "late_B": []
+ },
+ "rules": {
+  "A_checked": 0,
+  "A_expected_trades": 0,
+  "A_mismatch": [],
+  "A_legacy": 35,
+  "B_checked": 0,
+  "B_expected_bids": 0,
+  "B_mismatch": [],
+  "B_filled": 0,
+  "B_cancelled": 0
+ },
+ "exits": {
+  "trades": 12,
+  "exit_mismatch": [
+   {
+    "strategy": "A",
+    "T": 1793790000,
+    "live": [
+     "SL",
+     176.0,
+     -0.321
+    ],
+    "replay": [
+     "SL",
+     201,
+     -0.491
+    ],
+    "prints": 1330
+   },
+   {
+    "strategy": "A",
+    "T": 1793794200,
+    "live": [
+     "SL",
+     160.3,
+     -0.463
+    ],
+    "replay": [
+     "SL",
+     163,
+     -0.472
+    ],
+    "prints": 1491
+   },
+   {
+    "strategy": "B",
+    "T": 1793795400,
+    "live": [
+     "TP",
+     105.1,
+     0.38
+    ],
+    "replay": [
+     "TP",
+     108,
+     0.38
+    ],
+    "prints": 2464
+   }
+  ],
+  "fill_mismatch": [],
+  "A_fill_plausible": 3,
+  "A_trades": 8,
+  "pnl_live": 0.8287690000000002,
+  "pnl_replay": 0.6214250000000003
+ },
+ "parity": {
+  "source": "archive+REST",
+  "windows": 4,
+  "A_mean_abs_dp": 0.05562637547593344,
+  "A_max_abs_dp": 0.07717052078323988,
+  "A_n": 2,
+  "A_sign_flips": 1,
+  "A_threshold_decisions_differ": 1,
+  "B_mean_abs_dp": 0.01411685991517636,
+  "B_max_abs_dp": 0.0339946826231004,
+  "B_n": 4,
+  "B_sign_flips": 0,
+  "B_threshold_decisions_differ": 0
+ }
+}

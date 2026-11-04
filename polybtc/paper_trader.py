@@ -133,7 +133,8 @@ class _LazyCol:
 
 
 # ------------------------------------------------------------------------------------ backfill
-def backfill(tl, archive_days=10):
+def load_archive(tl):
+    """Archive part of the backfill (btcmovement2 timeline + btc-predict extras); returns the archive end (exclusive)."""
     atl = load_timeline()
     a_end = atl.t0_epoch + atl.n                           # archive end (exclusive)
     start = tl.t0_epoch
@@ -155,6 +156,11 @@ def backfill(tl, archive_days=10):
     ok = np.isfinite(pc) & np.isfinite(sc)
     tl.basis = float(np.nanmedian(pc[ok][-DAY:] / sc[ok][-DAY:])) if ok.any() else 1.0
     log(f"archive loaded through {dt.datetime.fromtimestamp(a_end, dt.UTC)}; perp/spot basis {tl.basis:.6f}")
+    return a_end
+
+
+def backfill(tl, a_end=None):
+    a_end = load_archive(tl) if a_end is None else a_end
     # REST backfill of spot + ETH 1 s klines up to now (two threads; retries; progress lines)
     def klines(sym, t_from):
         for k in range(8):
@@ -404,7 +410,8 @@ class Position:
         px = float(np.clip(px, 0.001, 0.999)); f = 0.0 if maker else fee(px, self.cfg["fee"])
         self.open = False
         self.rec = dict(strategy=self.strat, T=self.T, side=self.side, p_model=self.p_model, market=self.market, entry=self.entry,
-                        fill_time=self.fill_ms / 1000 - self.T, exit=px, exit_kind=kind, exit_time=ts / 1000 - self.T, fee=f, pnl=px - self.entry - f)
+                        fill_time=self.fill_ms / 1000 - self.T, exit=px, exit_kind=kind, exit_time=ts / 1000 - self.T, fee=f, pnl=px - self.entry - f,
+                        tp=self.cfg["tp"], sl=self.cfg["sl"], tstop=self.cfg["tstop"])
         return self.rec
 
 
@@ -420,6 +427,7 @@ class Trader:
         self.bp = BPLive(); self.bp_z = {}
         self.model = Model(self.tl); self.feeds = {}; self.pending = []; self.positions = []; self.done = set()
         self.ftrade = open(os.path.join(PAPER, "paper_trades.jsonl"), "a"); self.ffc = open(os.path.join(PAPER, "forecasts.jsonl"), "a")
+        self.forder = open(os.path.join(PAPER, "orders.jsonl"), "a")
 
     def feed_for(self, T):
         if T not in self.feeds:
@@ -477,28 +485,33 @@ class Trader:
                 # ---- strategy A decision at T-45 (bars through T-46 final at ~T-44)
                 if now >= T - 43.5 and ("A", T) not in self.done and self.tl.known >= (T - 45) - self.tl.t0_epoch:
                     self.done.add(("A", T)); fc = self.model.forecast(T, -45, 0); p = fc.get("close_p", np.nan)
-                    self.ffc.write(json.dumps(dict(strategy="A", T=T, **fc)) + "\n"); self.ffc.flush()
                     feed = self.feed_for(T); mkt, _ = feed.last_up() if feed else (np.nan, None)
                     z5 = self.bp_z.get(T, {}).get("s5", np.nan)
-                    agree = np.isfinite(z5) and np.sign(z5) == np.sign(p - 0.5)
-                    if not (np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95):
+                    agree = bool(np.isfinite(z5) and np.sign(z5) == np.sign(p - 0.5))
+                    plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)
+                    action = "skip" if not plausible else ("BUY " + ("UP" if p > 0.5 else "DOWN") if abs(p - 0.5) >= CFG_A["thr"] and feed is not None and agree else "none")
+                    self.ffc.write(json.dumps(dict(strategy="A", T=T, ts=round(time.time(), 2), market=mkt, z_s5=z5, agree=agree, action=action, **fc)) + "\n"); self.ffc.flush()
+                    if not plausible:
                         log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} SKIP: implausible forecast (p0={fc.get('p0')}, p={p}) - data gap?"); continue
                     log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} p_close={p:.3f} bp_z5={z5:+.3f} agree={agree} market={mkt:.3f} ({fc['compute_s']}s)")
-                    if np.isfinite(p) and abs(p - 0.5) >= CFG_A["thr"] and feed is not None and agree:
-                        side = "UP" if p > 0.5 else "DOWN"
+                    if action.startswith("BUY"):
+                        side = action[4:]
                         self.positions.append(Position("A", T, side, CFG_A["entry"], int((T - 45) * 1000), CFG_A, p, mkt)); log(f"[A] BUY {side} @0.50 (assumed pre-open fill)")
                 # ---- strategy B decision at T (bars through T-1 final at ~T+1.5)
                 if T - 300 + 1.6 <= now < T - 300 + 10 and ("B", T - 300) not in self.done and self.tl.known >= (T - 300) - self.tl.t0_epoch:   # skip stale windows after a restart
                     Tb = T - 300; self.done.add(("B", Tb))
                     fc = self.model.forecast(Tb, -LAG, LAG); p = fc.get("close_p", np.nan)
                     feed = self.feed_for(Tb); mkt, mts = feed.last_up() if feed else (np.nan, None)
-                    self.ffc.write(json.dumps(dict(strategy="B", T=Tb, market=mkt, **fc)) + "\n"); self.ffc.flush()
+                    plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)
+                    action = "skip" if not plausible else ("BID " + ("UP" if p > mkt else "DOWN") if np.isfinite(mkt) and abs(p - mkt) >= CFG_B["delta"] else "none")
+                    self.ffc.write(json.dumps(dict(strategy="B", T=Tb, ts=round(time.time(), 2), market=mkt, action=action, **fc)) + "\n"); self.ffc.flush()
                     log(f"[B] T={dt.datetime.fromtimestamp(Tb, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} p0={fc['p0']:.1f} now={fc['price_now']:.1f} ({fc['compute_s']}s)")
-                    if not (np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95):
+                    if not plausible:
                         log(f"[B] T={dt.datetime.fromtimestamp(Tb, dt.UTC):%H:%M} SKIP: implausible forecast (p0={fc.get('p0')}, p={p}) - data gap?"); continue
-                    if np.isfinite(p) and np.isfinite(mkt) and abs(p - mkt) >= CFG_B["delta"]:
-                        side = "UP" if p > mkt else "DOWN"; bid = mkt if side == "UP" else 1 - mkt
+                    if action.startswith("BID"):
+                        side = action[4:]; bid = mkt if side == "UP" else 1 - mkt
                         self.pending.append(dict(T=Tb, side=side, bid=bid, placed_ms=int(time.time() * 1000), until=time.time() + CFG_B["cancel"], p=p, mkt=mkt))
+                        self.forder.write(json.dumps(dict(T=Tb, side=side, bid=bid, placed=round(time.time(), 2), event="placed")) + "\n"); self.forder.flush()
                         log(f"[B] REST BID {side} @{bid:.3f} for {CFG_B['cancel']}s")
                 # ---- pending maker orders
                 for o in list(self.pending):
@@ -509,9 +522,11 @@ class Trader:
                             if ps <= o["bid"] + 1e-9: filled = ts; break
                     if filled:
                         self.pending.remove(o); self.positions.append(Position("B", o["T"], o["side"], o["bid"], filled, CFG_B, o["p"], o["mkt"]))
+                        self.forder.write(json.dumps(dict(T=o["T"], side=o["side"], bid=o["bid"], event="filled", fill_time=round(filled / 1000 - o["T"], 3))) + "\n"); self.forder.flush()
                         log(f"[B] FILLED {o['side']} @{o['bid']:.3f} at T+{filled/1000 - o['T']:.1f}s")
                     elif time.time() > o["until"]:
                         self.pending.remove(o); log(f"[B] cancelled unfilled bid {o['side']} @{o['bid']:.3f}")
+                        self.forder.write(json.dumps(dict(T=o["T"], side=o["side"], bid=o["bid"], event="cancelled")) + "\n"); self.forder.flush()
                 # ---- open positions
                 for pos in list(self.positions):
                     feed = self.feeds.get(pos.T)

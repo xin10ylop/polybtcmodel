@@ -199,6 +199,17 @@ Running it on your own box: `scripts/setup_box.sh` (clones the four repos under 
 `data-api.binance.vision` and `www.okx.com` answer from the box's IP. Daily, re-run `scripts/fetch_binance.py`
 for the previous day and rebuild the timeline so the regime features keep a full history.
 
+**Auditing the paper trader** (`polybtc/paper_audit.py`, run daily for the previous UTC day after the data refresh):
+`PAPER_DIR=/home/user/paper python3 polybtc/paper_audit.py --day YYYY-MM-DD`. It checks four things and writes
+`audit_<day>.json`: (1) coverage — every 5-minute window the trader was up for has an A and a B decision, on time
+(A at T−44 s, B at T+1.6 s; gaps and late decisions are listed); (2) rules — a trade exists exactly when the frozen
+rule says so, from the recorded inputs (`forecasts.jsonl` carries p, market, btc-predict z, agreement and the action
+taken; `orders.jsonl` the B bids and their fill/cancel); (3) model parity — the live forecasts are recomputed offline
+from the archive data for the same seconds (btcmovement2 close head and btc-predict z); differences come only from
+the live feeds, and the report counts direction flips and trade/no-trade decisions that would differ; (4) exits —
+every trade's exit and every B maker fill is replayed on Polymarket's own trade history and compared with what the
+websocket produced; for A the presence of a print at ≤ 0.50 on our side in [T−45, T−40] is reported (fill plausibility).
+
 Order mechanics (A): buy limit at 0.50 placed at T−45 (must fill before ~T−40, else cancel); after the
 fill, a resting sell limit at 0.80 (TP); the stop (0.05) and the time-stop (T+240) are market sells triggered
 by the bot (Polymarket has no native stop orders).

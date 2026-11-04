@@ -29,3 +29,4 @@ nohup bash -c 'while true; do /home/user/venv/bin/python3 -W ignore polybtc/pape
 sleep 5; tail -3 $PAPER_DIR/paper.log 2>/dev/null || true
 echo "running.  log:   tail -f /home/user/paper/paper.log"
 echo "          tally: PAPER_DIR=/home/user/paper /home/user/venv/bin/python3 /home/user/polybtcmodel/polybtc/paper_trader.py --summary"
+echo "          audit: PAPER_DIR=/home/user/paper /home/user/venv/bin/python3 /home/user/polybtcmodel/polybtc/paper_audit.py --day $(date -u -d yesterday +%F)"
