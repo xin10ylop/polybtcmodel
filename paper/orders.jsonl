@@ -2,3 +2,5 @@
 {"strategy": "C", "T": 1793833500, "side": "DOWN", "bid": 0.37, "event": "filled", "fill_time": -3.185}
 {"strategy": "C", "T": 1793834700, "side": "UP", "bid": 0.55, "placed": 1793834696.67, "placed_delay": -3.33, "event": "placed"}
 {"strategy": "C", "T": 1793834700, "side": "UP", "bid": 0.55, "event": "filled", "fill_time": -3.13}
+{"strategy": "C", "T": 1793835300, "side": "DOWN", "bid": 0.22999999999999998, "placed": 1793835296.93, "placed_delay": -3.07, "event": "placed"}
+{"strategy": "C", "T": 1793835300, "side": "DOWN", "bid": 0.22999999999999998, "event": "filled", "fill_time": -1.43}

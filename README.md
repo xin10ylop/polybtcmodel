@@ -14,13 +14,16 @@ to simulate trades and to evaluate; the BTC models never saw it.
 
 | strategy | trades/day | avg P&L per share | return on stake | win rate | Sharpe (daily) | t-stat | max drawdown ($100/trade) |
 |---|---|---|---|---|---|---|---|
-| **B: open mispricing** (δ = 0.12, TP 0.80 / SL 0.10 / time-stop T+240) | 22 | **+5.6 ¢** | **+11.2 %** | 65 % | 14.5 | 4.6 | $519 |
+| **B: open mispricing** (δ = 0.12, sell limit 0.85, else hold to settlement) | 22 | **+6.6 ¢** | **+13.3 %** | 66 % | 16.1 | 4.6 | $1,048 |
+| B0: the same with the previous exits (TP 0.80 / SL 0.10 / T+240), kept as a shadow | 22 | +5.6 ¢ | +11.2 % | 65 % | 14.5 | 4.6 | $519 |
+| D: high-confidence settlement capture (T+90, model ≥ 0.90 for a side trading ≤ 0.90, bid at the last print, hold to settlement) | 10 | +2.3 ¢ | +4.6 % | **89 %** | 4.5 | 1.4 | $645 |
 | B2: same, δ = 0.08 (more trades) | 55 | +2.7 ¢ | +5.4 % | 64 % | 11.0 | 3.5 | $1,050 |
 | A: pre-open directional (T−45, btc-predict agreement, sell limit 0.85, else hold to settlement) | 40 | +4.7 ¢ | +9.3 % | 64 % | 13.6 | 4.2 | $1,120 |
 | A0: the same with the previous exits (TP 0.80 / SL 0.05 / T+240), kept as a shadow | 40 | +3.4 ¢ | +6.7 % | 64 % | 12.3 | 3.4 | $606 |
 | C: "B five seconds early" (T−5, δ = 0.08, bid at the last print until the open, TP 0.80 / SL 0.05 / T+240) | 40 | +2.6 ¢ | +5.2 % | 64 % | 7.2 | 2.8 | $1,950 |
 | A + B combined ($100 per trade) | 62 | — | **$17.7 k over 34 days** | — | 18.6 | — | $596 |
-| A + C + B (C first, B on the windows C did not fill) | 93 | — | **$26.8 k over 34 days** | — | 21.2 | — | $679 |
+| A + C + B (C first, B on the windows C did not fill) | 93 | — | **$27.4 k over 34 days** | — | 20.9 | — | $846 |
+| A + C + B + D | 103 | — | **$28.3 k over 34 days** | — | 21.0 | — | $815 |
 
 Both strategies were selected on the tuning period (2026-08-20 → 2026-09-30) and then run once on the
 test period. They are also positive on the earlier, structurally different August 1–19 period.
@@ -66,6 +69,10 @@ perp-leads-spot lead-lag; it is **worth ~62 % accuracy over 10 seconds and ~53 %
 ## 3. The strategies
 
 ### B — open mispricing (primary)
+
+Exits updated 2026-11-04 (`research/ideas10.py` idea 8): sell limit 0.85, otherwise hold to settlement, no stop. Better
+than the previous TP 0.80 / SL 0.10 / T+240 in all three TWAP-era periods (+5.5 / +5.2 / +6.7 ¢ vs +4.5 / +4.5 / +5.6);
+in July (point-price rule, 195 trades) the previous exits did better (+2.7 vs +1.3 ¢). The previous exits run as shadow B0.
 * At the nominal open **T**, run the btcmovement2 close head on the **effective window** (timeline
   shifted by 30 s so P0 = Binance open of second T−30, elapsed 30 s; data < T only).
 * Take the last Polymarket print (DOWN prints converted to UP-equivalent `1 − p`).
@@ -91,6 +98,14 @@ rare; the signal is on the *follow* side. C overlaps with B on only a third of i
 B on the rest) beats B alone in all three TWAP-era periods (paired day bootstrap p = 0.015 / 0.001 / 0.026). It is the
 junior stream: smaller edge per trade (+2.6 ¢ test), twice the trades, larger drawdowns ($1,950 test vs $519 for B),
 and nothing in July under the old point-price rule (B stayed positive there). Paper-traded as strategy C.
+
+### D — high-confidence settlement capture (added 2026-11-04, `research/ideas10.py` idea 6)
+
+At T+90 the close head is much sharper (AUC ≈ 0.8). When it gives one side ≥ 0.90 while that side's last print is still
+≤ 0.90, a bid rests at the last print for 10 s and the position is held to settlement (no take-profit, no stop). It wins
+83 / 87 / 89 / 90 % of the time on Aug 1–19 / tune / test / July for +1.5 / +0.9 / +2.3 / +3.6 ¢ per share on a stake
+near 0.85: the high-win-rate, low-profit stream the user asked for, about 10 trades a day. Its daily P&L is nearly
+uncorrelated with the others. Paper-traded as strategy D.
 
 ### A — pre-open directional (the user's base case, conditional on clean fills)
 * Decision at **T−45** from the btcmovement2 close head run as a pseudo window starting at T−45
