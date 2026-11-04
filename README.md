@@ -16,8 +16,8 @@ to simulate trades and to evaluate; the BTC models never saw it.
 |---|---|---|---|---|---|---|---|
 | **B: open mispricing** (δ = 0.12, TP 0.80 / SL 0.10 / time-stop T+240) | 22 | **+5.6 ¢** | **+11.2 %** | 65 % | 14.5 | 4.6 | $519 |
 | B2: same, δ = 0.08 (more trades) | 55 | +2.7 ¢ | +5.4 % | 64 % | 11.0 | 3.5 | $1,050 |
-| A: pre-open directional (T−45, TP 0.80 / SL 0.20 / T+240) | 59 | +2.3 ¢ | +4.5 % | 57 % | 10.7 | 3.2 | $891 |
-| A + B combined ($100 per trade) | 80 | — | **$17.8 k over 34 days** | — | 18.2 | — | $500 |
+| A: pre-open directional (T−45, btc-predict agreement, TP 0.80 / SL 0.05 / T+240) | 40 | +3.4 ¢ | +6.7 % | 64 % | 12.3 | 3.4 | $606 |
+| A + B combined ($100 per trade) | 62 | — | **$17.7 k over 34 days** | — | 18.6 | — | $596 |
 
 Both strategies were selected on the tuning period (2026-08-20 → 2026-09-30) and then run once on the
 test period. They are also positive on the earlier, structurally different August 1–19 period.
