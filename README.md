@@ -152,3 +152,45 @@ reports/          summary.json, B_exit_grid.csv, trades_*.csv
   10 s resting window.
 * Maker fills were simulated as "a print at/below my bid" — queue position is ignored.
 * Fees: `feeSchedule` of each market (rate 0.07, exponent 1 at the time of writing); re-check.
+
+## 7. Resolution rule update (found 2026-11-04) and the improvement pass
+
+**The markets now settle on a 60-second Chainlink TWAP** (since early September; August markets used a
+point price). This is the mechanism behind the "~30 s lag": the start reference is the average of
+[T−60, T], centred at T−30, and the end reference the average of [T+240, T+300]. A TWAP-based Binance
+label agrees with Polymarket's resolution 96.4% of the time (point label: 93.4%). The effective-window
+model used throughout is the right approximation, and the T+240 time-stop sits exactly where the end
+TWAP starts.
+
+Improvement pass for strategy A (selection on tune, confirmation on test; `research/improve_A.py`,
+`research/improve_A2.py`, `research/direct_twap_model.py`, `reports/A_improve_grid.csv`):
+
+| idea | verdict |
+|---|---|
+| stack m2 + bm + bp (+ partial-TWAP displacement, +short heads) | +0.005 AUC at best; richer stacks overfit tune; rejected |
+| partial-TWAP displacement at T−45 (15 s of the reference already known) | no information (coef ≈ 0); rejected |
+| direct LightGBM on the TWAP-sign target, trained on the 3 months available | worse than the frozen head (AUC 0.51–0.52 vs 0.52–0.53): too little history; rejected |
+| trailing stops | never in the top configurations; rejected |
+| decision at T−40 | better on tune, not on test, fill-timing risk; rejected |
+| hour-of-day / session filters | inconsistent between tune and test; rejected |
+| confidence-scaled stake | raises mean, not Sharpe; optional |
+| **require btc-predict's 5-min forecast (T−60) to agree with the side** | consistent: tune +2.1¢ vs +1.5¢, test **+2.9¢ vs +2.25¢**, Sharpe 11.6 vs 10.7, win 57.5%, ~39 trades/day; **adopted** |
+| TP 0.75 / SL 0.10 instead of 0.80 / 0.20 | 65% win rate, slightly lower mean; alternative for fewer losing trades |
+
+Strategy A (frozen, live): decision at T−45 from the btcmovement2 close head on a pseudo window starting at
+T−45, |p − 0.5| ≥ 0.05, btc-predict core 5-min z-score at T−60 agreeing in sign, buy at 0.50 filled before
+T−40, TP 0.80 (resting), SL 0.20, time-stop T+240. Days ending negative on the test period: 10 of 34.
+
+## 8. Paper trading (`polybtc/paper_trader.py`)
+
+Feeds: Binance spot and ETH 1 s klines (websocket mirror + REST backfill), OKX BTC-USDT perpetual trades
+(REST polling; the Binance perpetual is geo-blocked here, OKX stands in for the lead-lag feature), the
+Polymarket CLOB market websocket (prints and books). Model history from the local archive; the btc-predict
+live feature path is parity-tested against training (`python polybtc/bp_live.py`). Logs: `paper/forecasts.jsonl`
+(every window), `paper/paper_trades.jsonl`, `paper/paper.log`; `python polybtc/paper_trader.py --summary`
+prints P&L with resolutions. Strategy A is simulated with the user's execution assumption (filled at 0.50
+before T−40); strategy B is logged as a shadow (its maker fills cannot be verified in paper mode).
+
+Model-improvement experiments in progress (accepted only if tune and test both improve with the frozen
+configuration): btcmovement2 refit on 2025 → Jul 2026 (`scripts/refit_m2.sh`), btc-predict + Coinbase
+premium (`scripts/train_bp_cb.py`).
