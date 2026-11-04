@@ -568,7 +568,8 @@ def summary():
     t["settle_pnl"] = np.where(t.resolved_up.isna(), np.nan, np.where((t.resolved_up == 1) == (t.side == "UP"), 1.0, 0.0) - t.entry)
     pd.set_option("display.width", 220)
     for s, g in t.groupby("strategy"):
-        print(f"\n== strategy {s}: {len(g)} trades, mean pnl/share {g.pnl.mean():+.4f}, win {np.mean(g.pnl > 0):.2%}, total {g.pnl.sum():+.3f}, "
+        w_, l_ = g.pnl[g.pnl > 0].mean(), g.pnl[g.pnl <= 0].mean(); be = (-l_ / (w_ - l_)) if np.isfinite(w_) and np.isfinite(l_) and w_ > l_ else np.nan
+        print(f"\n== strategy {s}: {len(g)} trades, mean pnl/share {g.pnl.mean():+.4f}, win {np.mean(g.pnl > 0):.2%} (break-even {be:.1%} from avg win {w_:+.3f} / avg loss {l_:+.3f}), total {g.pnl.sum():+.3f}, "
               f"settle-equivalent {g.settle_pnl.mean():+.4f} | exits {g.exit_kind.value_counts().to_dict()}")
     print(f"\n== A + B combined: {len(t)} trades, total {t.pnl.sum():+.3f} per share; at $100 per trade: ${(t.pnl / t.entry * 100).sum():+.0f}")
     print(t.tail(15)[["strategy", "T", "side", "p_model", "market", "entry", "fill_time", "exit_kind", "exit_time", "exit", "pnl", "resolved_up"]].round(3).to_string(index=False))
