@@ -3,3 +3,4 @@
 {"strategy": "A", "T": 1793791800, "side": "UP", "p_model": 0.5608159681300509, "market": 0.48, "entry": 0.5, "fill_time": -45.0, "exit": 0.8, "exit_kind": "TP", "exit_time": 83.24399995803833, "fee": 0.0, "pnl": 0.30000000000000004}
 {"strategy": "B", "T": 1793791800, "side": "UP", "p_model": 0.6162414961712436, "market": 0.47, "entry": 0.47, "fill_time": 2.377000093460083, "exit": 0.8, "exit_kind": "TP", "exit_time": 83.24399995803833, "fee": 0.0, "pnl": 0.33000000000000007}
 {"strategy": "B", "T": 1793792100, "side": "UP", "p_model": 0.7755938424797731, "market": 0.64, "entry": 0.64, "fill_time": 2.303999900817871, "exit": 0.8, "exit_kind": "TP", "exit_time": 140.88000011444092, "fee": 0.0, "pnl": 0.16000000000000003}
+{"strategy": "A", "T": 1793792700, "side": "UP", "p_model": 0.5572631800491363, "market": 0.51, "entry": 0.5, "fill_time": -45.0, "exit": 0.8, "exit_kind": "TP", "exit_time": 65.30599999427795, "fee": 0.0, "pnl": 0.30000000000000004}
