@@ -194,6 +194,15 @@ live feature path is parity-tested against training (`python polybtc/bp_live.py`
 prints P&L with resolutions. Strategy A is simulated with the user's execution assumption (filled at 0.50
 before T−40); strategy B is logged as a shadow (its maker fills cannot be verified in paper mode).
 
+Running it on your own box: `scripts/setup_box.sh` (clones the four repos under `/home/user`, installs, pulls
+10 days of Binance archive history, starts the trader in an auto-restart loop). Check first that
+`data-api.binance.vision` and `www.okx.com` answer from the box's IP. Daily, re-run `scripts/fetch_binance.py`
+for the previous day and rebuild the timeline so the regime features keep a full history.
+
+Order mechanics (A): buy limit at 0.50 placed at T−45 (must fill before ~T−40, else cancel); after the
+fill, a resting sell limit at 0.80 (TP); the stop (0.05) and the time-stop (T+240) are market sells triggered
+by the bot (Polymarket has no native stop orders).
+
 Model-improvement experiments (accepted only if tune and test both improve with the frozen configuration):
 
 | experiment | result | verdict |
