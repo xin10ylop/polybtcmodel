@@ -55,7 +55,7 @@ print(grid[(grid.tp == 0.65) & (grid.sl == 0.30) & (grid.tstop == 290)][["delta"
 # frozen live rule (README): m2 close head |p-0.5| >= 0.05, btc-predict 5-min z at T-60 agreeing in sign, TP 0.80 / SL 0.05 / T+240
 CFG_A = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.50, "signal": "m2_-45_close_p", "agree": "bp_-60_z_s5", "thr": 0.05, "tp": 0.85, "sl": None, "tstop": None, "settle": True}
 CFG_A0 = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.50, "signal": "m2_-45_close_p", "agree": "bp_-60_z_s5", "thr": 0.05, "tp": 0.80, "sl": 0.05, "tstop": 240}   # previous frozen exits (shadow)
-CFG_B = dict(fs.CFG_B); CFG_B2 = dict(fs.CFG_B2); CFG_C = dict(fs.CFG_C)
+CFG_B = dict(fs.CFG_B); CFG_B0 = dict(fs.CFG_B0); CFG_B2 = dict(fs.CFG_B2); CFG_C = dict(fs.CFG_C); CFG_D = dict(fs.CFG_D)
 
 
 def trades_A2(cfg, master, mk, g):
@@ -74,7 +74,7 @@ def trades_A2(cfg, master, mk, g):
 fs.trades_A = trades_A2
 summary = {}
 recs = {}
-for nm, cfg in (("A_preopen", CFG_A), ("A0_preopen_frozen_exits", CFG_A0), ("B_open_mispricing", CFG_B), ("B2_open_mispricing_delta008", CFG_B2), ("C_preopen_follow", CFG_C)):
+for nm, cfg in (("A_preopen", CFG_A), ("A0_preopen_frozen_exits", CFG_A0), ("B_open_mispricing", CFG_B), ("B0_open_mispricing_frozen_exits", CFG_B0), ("B2_open_mispricing_delta008", CFG_B2), ("C_preopen_follow", CFG_C), ("D_high_confidence_settle", CFG_D)):
     res, rec = fs.evaluate(cfg, label=nm)
     summary[nm] = {"config": cfg, "results": res.round(5).to_dict()}
     rec.to_csv(f"{OUT}/trades_{nm}.csv", index=False); recs[nm] = rec
@@ -98,6 +98,9 @@ print("\n## with C (T-5 disagreement >= 0.08, bid at the last print until the op
 for c in ("C", "C+B", "A+C+B"):
     eq = comb3[c].cumsum(); print(f"{c}: total {eq.iloc[-1]:.0f}  maxdd {(eq.cummax()-eq).max():.0f}  worst day {comb3[c].min():.0f}  sharpe {comb3[c].mean()/comb3[c].std()*np.sqrt(365):.1f}  days {len(eq)}  trades/day {len(bc[(bc.date >= TEST[0]) & (bc.date <= TEST[1])]) / len(eq) if c == 'C+B' else len(cf[(cf.date >= TEST[0]) & (cf.date <= TEST[1])]) / len(eq):.1f}")
 print("corr daily A vs C+B:", round(comb3.A.corr(comb3["C+B"]), 3))
+rd = recs["D_high_confidence_settle"]; dd_ = daily(rd); comb3["D"] = dd_.reindex(comb3.index).fillna(0); comb3["A+C+B+D"] = comb3["A+C+B"] + comb3["D"]
+for c in ("D", "A+C+B+D"):
+    eq = comb3[c].cumsum(); print(f"{c}: total {eq.iloc[-1]:.0f}  maxdd {(eq.cummax()-eq).max():.0f}  worst day {comb3[c].min():.0f}  sharpe {comb3[c].mean()/comb3[c].std()*np.sqrt(365):.1f}  days {len(eq)}")
 summary["combined_test_daily_with_C"] = comb3.round(3).to_dict()
 # Kelly-style sizing from per-trade returns (B, test)
 t = rb[(rb.date >= TEST[0]) & (rb.date <= TEST[1]) & rb.filled]; r = (t.pnl / t.entry_px).values

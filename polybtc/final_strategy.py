@@ -25,12 +25,26 @@ def trades_A(cfg, master, mk, g):
     return m, sim, p, side, sel, coef
 
 
+def _settle_override(sim, m, tp):
+    """no stop, no time-stop: trades that did not reach the sell limit are held to settlement (1.00 / 0.00, no fee)."""
+    idx = np.arange(len(m))
+    for sd in (0, 1):
+        k = sim["kind"][idx, sd, 0, 0, 0]; ent = sim["entry_px"][idx, sd]
+        sim["pnl"][idx, sd, 0, 0, 0] = np.where(k == 0, tp - ent, sim["settle"][idx, sd]) if tp is not None else sim["settle"][idx, sd]
+        sim["kind"][idx, sd, 0, 0, 0] = np.where((k == 0) & (tp is not None), 0, 2)
+
+
 def trades_B(cfg, master, mk, g):
-    d = cfg["decision_offset"]
+    d = cfg["decision_offset"]; settle = cfg.get("settle", False)
     sim = polysim.simulate(mk, g, t_entry=d, entry_mode="maker_last", t_cancel=d + cfg["cancel"],
-                           tps=(cfg["tp"],), sls=(cfg["sl"],), tstops=(cfg["tstop"],), slip=cfg.get("slip", 0.01))
+                           tps=(cfg["tp"] if cfg["tp"] is not None else 1.01,), sls=(0.0 if settle else cfg["sl"],), tstops=(300 if settle else cfg["tstop"],), slip=cfg.get("slip", 0.01))
     m, sim = ex.align(master, sim)
+    if settle: _settle_override(sim, m, cfg["tp"])
     mod = m[f"m2_{d}_close_p"].values; mkt = sim["pre_last"][:, 0]
+    if cfg["kind"] == "D":   # model >= q for a side that still trades <= maxpx
+        side = np.where(mod >= 0.5, 0, 1); pm = np.where(side == 0, mod, 1 - mod); pk = np.where(side == 0, mkt, 1 - mkt); p = pm
+        sel = np.isfinite(pm) & np.isfinite(pk) & (pm >= cfg["q"]) & (pk <= cfg["maxpx"])
+        return m, sim, p, side, sel, {}
     dis = mod - mkt; p = 0.5 + dis
     side = np.where(dis > 0, 0, 1)
     sel = np.isfinite(dis) & (np.abs(dis) >= cfg["delta"])
@@ -41,7 +55,7 @@ def trades_B(cfg, master, mk, g):
 
 def evaluate(cfg, master=None, mk=None, g=None, verbose=True, label=""):
     master = ex.master if master is None else master; mk = ex.mk if mk is None else mk; g = ex.g if g is None else g
-    m, sim, p, side, sel, coef = (trades_A if cfg["kind"] == "A" else trades_B)(cfg, master, mk, g)
+    m, sim, p, side, sel, coef = (trades_A if cfg["kind"] == "A" else trades_B)(cfg, master, mk, g)   # kinds B and D share trades_B
     idx = np.arange(len(m))
     pnl = np.where(sel, sim["pnl"][idx, side, 0, 0, 0], np.nan)
     k = sim["kind"][idx, side, 0, 0, 0]; entry = sim["entry_px"][idx, side]; tex = sim["texit"][idx, side, 0, 0, 0]
@@ -90,7 +104,9 @@ def robustness(cfg, label=""):
 
 CFG_A = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.50, "stack_cols": ["m2_-45_close_p", "bm_-45_close_p", "bp_-60_z_s5"],
          "thr": 0.05, "tp": 0.85, "sl": None, "tstop": None, "settle": True}   # adopted 2026-11-04: TP 0.85 then hold to settlement (research/settle_exit_A.py); live rule in final_report_data.py / paper_trader.py
-CFG_B = {"kind": "B", "decision_offset": 0, "cancel": 10, "delta": 0.12, "tp": 0.80, "sl": 0.10, "tstop": 240}
+CFG_B = {"kind": "B", "decision_offset": 0, "cancel": 10, "delta": 0.12, "tp": 0.85, "sl": None, "tstop": None, "settle": True}   # adopted 2026-11-04: sell 0.85 else settle (research/ideas10.py)
+CFG_B0 = {"kind": "B", "decision_offset": 0, "cancel": 10, "delta": 0.12, "tp": 0.80, "sl": 0.10, "tstop": 240}                    # previous exits (shadow)
+CFG_D = {"kind": "D", "decision_offset": 90, "cancel": 10, "q": 0.90, "maxpx": 0.90, "tp": None, "sl": None, "tstop": None, "settle": True}   # high-confidence settlement capture
 CFG_B2 = {"kind": "B", "decision_offset": 0, "cancel": 10, "delta": 0.08, "tp": 0.80, "sl": 0.10, "tstop": 240}
 CFG_C = {"kind": "B", "decision_offset": -5, "cancel": 5, "delta": 0.08, "tp": 0.80, "sl": 0.05, "tstop": 240}   # "B five seconds early" (research/preopen_fade.py, preopen_follow_check.py)
 

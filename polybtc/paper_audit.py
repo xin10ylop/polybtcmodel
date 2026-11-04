@@ -103,8 +103,13 @@ def rules(day, fcs, trades, orders):
             mkt = r.get("market", np.nan); mkt = np.nan if mkt is None else mkt
             plausible = np.isfinite(r.get("p0", np.nan) or np.nan) and np.isfinite(p) and 0.05 < p < 0.95
             cfgx = pt.CFGS.get(r["strategy"], pt.CFG_B); st = r["strategy"]
-            expect = plausible and np.isfinite(mkt) and abs(p - mkt) >= cfgx["delta"]
-            side = "UP" if p > mkt else "DOWN"
+            if st == "D":
+                plausible = np.isfinite(r.get("p0", np.nan) or np.nan) and np.isfinite(p) and 0.01 < p < 0.99
+                side = "UP" if p >= 0.5 else "DOWN"; psm = p if side == "UP" else 1 - p; psk = mkt if side == "UP" else 1 - mkt
+                expect = plausible and np.isfinite(mkt) and psm >= cfgx["q"] and psk <= cfgx["maxpx"]
+            else:
+                expect = plausible and np.isfinite(mkt) and abs(p - mkt) >= cfgx["delta"]
+                side = "UP" if p > mkt else "DOWN"
             want_action = f"BID {side}" if expect else ("none" if plausible else "skip")
             ev = [o for o in orders if o["T"] == T and o.get("strategy", "B") == st]
             placed = any(o["event"] == "placed" for o in ev); filled = any(o["event"] == "filled" for o in ev); cancelled = any(o["event"] == "cancelled" for o in ev)
@@ -217,7 +222,7 @@ def replay_exit(rec, prints, cfg, outcome=None):
         if ts < fill - 1: continue
         if ts > T + tstop + 3: break                           # the time-stop fires before later prints (history stamps lag the match by ~2 s)
         ps = up if side == "UP" else 1 - up
-        if ps >= cfg["tp"]: return "TP", ts - T, cfg["tp"], 0.0
+        if cfg["tp"] is not None and ps >= cfg["tp"]: return "TP", ts - T, cfg["tp"], 0.0
         if cfg["sl"] is not None and ps <= cfg["sl"]: return "SL", ts - T, ps - cfg["slip"], pt.fee(ps - cfg["slip"], cfg["fee"])
     if cfg["tstop"] is None:                                   # hold to settlement
         if outcome is None: return "NONE", None, None, None
@@ -263,7 +268,7 @@ def exits(day, trades, orders):
         cond = conds.get(o["T"])
         if not cond: continue
         if cond not in cache: cache[cond] = pm_prints(cond)
-        side = o["side"]; st = o.get("strategy", "B"); until = o["placed"] + pt.CFG_B["cancel"] if st == "B" else o["T"]
+        side = o["side"]; st = o.get("strategy", "B"); until = o["T"] if st == "C" else o["placed"] + pt.CFGS.get(st, pt.CFG_B)["cancel"]
         hit = [ts for ts, up, sz in cache[cond] if o["placed"] - 1 <= ts <= until + 2 and (up if side == "UP" else 1 - up) <= o["bid"] + 1e-9]
         ev = [x for x in orders if x["T"] == o["T"] and x.get("strategy", "B") == st and x["event"] in ("filled", "cancelled")]
         live_filled = any(x["event"] == "filled" for x in ev)

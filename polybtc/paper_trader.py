@@ -25,12 +25,14 @@ import score_m2 as S
 PAPER = os.environ.get("PAPER_DIR") or os.path.join(REPO, "paper"); os.makedirs(PAPER, exist_ok=True)   # PAPER_DIR=... keeps box logs out of git
 LOG = open(os.path.join(PAPER, "paper.log"), "a")
 DAY = 86400
-CFG_B = dict(delta=0.12, cancel=10, tp=0.80, sl=0.10, tstop=240, slip=0.01, fee=0.07)
+CFG_B = dict(delta=0.12, cancel=10, tp=0.85, sl=None, tstop=None, settle=True, slip=0.01, fee=0.07)   # adopted 2026-11-04: sell 0.85 else settle (research/ideas10.py)
+CFG_B0 = dict(delta=0.12, cancel=10, tp=0.80, sl=0.10, tstop=240, slip=0.01, fee=0.07)               # previous exits, shadow
+CFG_D = dict(decide=90, q=0.90, maxpx=0.90, cancel=10, tp=None, sl=None, tstop=None, settle=True, slip=0.01, fee=0.07)   # high-confidence settlement capture (research/ideas10.py idea 6)
 CFG_A = dict(thr=0.05, entry=0.50, tp=0.85, sl=None, tstop=None, settle=True, slip=0.01, fee=0.07)   # adopted 2026-11-04: TP 0.85, no stop, hold to settlement (research/settle_exit_A.py)
 CFG_A0 = dict(thr=0.05, entry=0.50, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=0.07)               # the previous frozen exits, kept as a shadow
 CFG_C = dict(delta=0.08, decide=-5, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=0.07)   # "B five seconds early": bid at the last print from T-5 until the open
 LAG = 30
-CFGS = {"A": CFG_A, "A0": CFG_A0, "B": CFG_B, "C": CFG_C}
+CFGS = {"A": CFG_A, "A0": CFG_A0, "B": CFG_B, "B0": CFG_B0, "C": CFG_C, "D": CFG_D}
 
 
 def log(*a):
@@ -401,7 +403,7 @@ class Position:
         if feed is not None:
             for ts, pu, tok, sz in feed.prints_since(self.fill_ms):
                 ps = pu if self.side == "UP" else 1 - pu
-                if ps >= cfg["tp"]:
+                if cfg.get("tp") is not None and ps >= cfg["tp"]:
                     return self.close(cfg["tp"], "TP", ts, maker=True)
                 if cfg.get("sl") is not None and ps <= cfg["sl"]:
                     return self.close(ps - cfg["slip"], "SL", ts)
@@ -491,6 +493,22 @@ class Trader:
                     self.model.regime(T, -LAG, LAG); self.done.add(("B_reg", T))
                 if now >= T - 25 and (T, -LAG, LAG + CFG_C["decide"]) not in self.model.regime_cache and ("C_reg", T) not in self.done:
                     self.model.regime(T, -LAG, LAG + CFG_C["decide"]); self.done.add(("C_reg", T))
+                if now >= T - 300 + CFG_D["decide"] - 30 and (T - 300, -LAG, LAG + CFG_D["decide"]) not in self.model.regime_cache and ("D_reg", T - 300) not in self.done:
+                    self.model.regime(T - 300, -LAG, LAG + CFG_D["decide"]); self.done.add(("D_reg", T - 300))
+                # ---- strategy D decision at T+90 of the running window: model >= q for a side that still trades <= maxpx -> bid at the last print, hold to settlement
+                Td = T - 300
+                if Td + CFG_D["decide"] + 1.6 <= now < Td + CFG_D["decide"] + 10 and ("D", Td) not in self.done and self.tl.known >= (Td + CFG_D["decide"]) - self.tl.t0_epoch:
+                    self.done.add(("D", Td)); fc = self.model.forecast(Td, -LAG, LAG + CFG_D["decide"]); p = fc.get("close_p", np.nan)
+                    feed = self.feed_for(Td); mkt, _ = feed.last_up() if feed else (np.nan, None)
+                    plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.01 < p < 0.99)
+                    side = "UP" if p >= 0.5 else "DOWN"; ps_model = p if side == "UP" else 1 - p; ps_mkt = mkt if side == "UP" else 1 - mkt
+                    action = "skip" if not plausible else (f"BID {side}" if np.isfinite(mkt) and ps_model >= CFG_D["q"] and ps_mkt <= CFG_D["maxpx"] else "none")
+                    self.ffc.write(json.dumps(dict(strategy="D", T=Td, ts=round(time.time(), 2), market=mkt, action=action, **self.lat(Td + CFG_D["decide"] + 1.6, feed), **fc)) + "\n"); self.ffc.flush()
+                    log(f"[D] T={dt.datetime.fromtimestamp(Td, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} ({fc['compute_s']}s)")
+                    if plausible and action.startswith("BID"):
+                        self.pending.append(dict(strategy="D", T=Td, side=side, bid=ps_mkt, placed_ms=int(time.time() * 1000), until=time.time() + CFG_D["cancel"], p=p, mkt=mkt))
+                        self.forder.write(json.dumps(dict(strategy="D", T=Td, side=side, bid=ps_mkt, placed=round(time.time(), 2), placed_delay=round(time.time() - Td, 2), event="placed")) + "\n"); self.forder.flush()
+                        log(f"[D] REST BID {side} @{ps_mkt:.3f} for {CFG_D['cancel']}s (model {ps_model:.3f})")
                 # ---- strategy C decision at T-5 (bars through T-6 final at ~T-4.5): disagreement with the last print, bid until the open
                 if T + CFG_C["decide"] + 1.4 <= now < T and ("C", T) not in self.done and self.tl.known >= (T + CFG_C["decide"]) - self.tl.t0_epoch:
                     self.done.add(("C", T)); fc = self.model.forecast(T, -LAG, LAG + CFG_C["decide"]); p = fc.get("close_p", np.nan)
@@ -560,6 +578,7 @@ class Trader:
                     st = o.get("strategy", "B")
                     if filled:
                         self.pending.remove(o); self.positions.append(Position(st, o["T"], o["side"], o["bid"], filled, CFGS[st], o["p"], o["mkt"]))
+                        if st == "B": self.positions.append(Position("B0", o["T"], o["side"], o["bid"], filled, CFG_B0, o["p"], o["mkt"]))   # shadow with the previous exits
                         self.forder.write(json.dumps(dict(strategy=st, T=o["T"], side=o["side"], bid=o["bid"], event="filled", fill_time=round(filled / 1000 - o["T"], 3))) + "\n"); self.forder.flush()
                         log(f"[{st}] FILLED {o['side']} @{o['bid']:.3f} at T{filled/1000 - o['T']:+.1f}s")
                     elif time.time() > o["until"]:
