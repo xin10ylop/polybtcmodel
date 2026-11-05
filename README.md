@@ -22,7 +22,7 @@ to simulate trades and to evaluate; the BTC models never saw it.
 | A0: the same with the previous exits (TP 0.80 / SL 0.05 / T+240), kept as a shadow | 40 | +3.4 ¢ | +6.7 % | 64 % | 12.3 | 3.4 | $606 |
 | C: "B five seconds early" (T−5, δ = 0.08, bid at the last print until the open, TP 0.80 / SL 0.05 / T+240) | 40 | +2.6 ¢ | +5.2 % | 64 % | 7.2 | 2.8 | $1,950 |
 | A + B combined ($100 per trade) | 62 | — | **$17.7 k over 34 days** | — | 18.6 | — | $596 |
-| **A + B + D (the running book)** | 72 | — | **$21.2 k over 34 days** | — | — | — | — |
+| **A + B + D (the running book)** | 72 | — | **$23.7 k over 34 days** | — | 19.8 | — | $873 |
 | A + C + B (C first, B on the rest; C not run) | 93 | — | $27.4 k over 34 days | — | 20.9 | — | $846 |
 
 Both strategies were selected on the tuning period (2026-08-20 → 2026-09-30) and then run once on the
