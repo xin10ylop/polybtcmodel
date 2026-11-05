@@ -33,6 +33,7 @@ CFG_A0 = dict(thr=0.05, entry=0.50, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=
 CFG_C = dict(delta=0.08, decide=-5, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=0.07)   # "B five seconds early": bid at the last print from T-5 until the open
 LAG = 30
 CFGS = {"A": CFG_A, "A0": CFG_A0, "B": CFG_B, "B0": CFG_B0, "C": CFG_C, "D": CFG_D}
+ENABLED = {"A", "B", "D"}          # C switched off 2026-11-05 at the user's request (code kept; add "C" here to run it again)
 
 
 def log(*a):
@@ -491,7 +492,7 @@ class Trader:
                     self.model.regime(T, -45, 0); self.done.add(("A_reg", T))
                 if now >= T - 20 and (T, -LAG, LAG) not in self.model.regime_cache and ("B_reg", T) not in self.done:
                     self.model.regime(T, -LAG, LAG); self.done.add(("B_reg", T))
-                if now >= T - 25 and (T, -LAG, LAG + CFG_C["decide"]) not in self.model.regime_cache and ("C_reg", T) not in self.done:
+                if "C" in ENABLED and now >= T - 25 and (T, -LAG, LAG + CFG_C["decide"]) not in self.model.regime_cache and ("C_reg", T) not in self.done:
                     self.model.regime(T, -LAG, LAG + CFG_C["decide"]); self.done.add(("C_reg", T))
                 if now >= T - 300 + CFG_D["decide"] - 30 and (T - 300, -LAG, LAG + CFG_D["decide"]) not in self.model.regime_cache and ("D_reg", T - 300) not in self.done:
                     self.model.regime(T - 300, -LAG, LAG + CFG_D["decide"]); self.done.add(("D_reg", T - 300))
@@ -510,7 +511,7 @@ class Trader:
                         self.forder.write(json.dumps(dict(strategy="D", T=Td, side=side, bid=ps_mkt, placed=round(time.time(), 2), placed_delay=round(time.time() - Td, 2), event="placed")) + "\n"); self.forder.flush()
                         log(f"[D] REST BID {side} @{ps_mkt:.3f} for {CFG_D['cancel']}s (model {ps_model:.3f})")
                 # ---- strategy C decision at T-5 (bars through T-6 final at ~T-4.5): disagreement with the last print, bid until the open
-                if T + CFG_C["decide"] + 1.4 <= now < T and ("C", T) not in self.done and self.tl.known >= (T + CFG_C["decide"]) - self.tl.t0_epoch:
+                if "C" in ENABLED and T + CFG_C["decide"] + 1.4 <= now < T and ("C", T) not in self.done and self.tl.known >= (T + CFG_C["decide"]) - self.tl.t0_epoch:
                     self.done.add(("C", T)); fc = self.model.forecast(T, -LAG, LAG + CFG_C["decide"]); p = fc.get("close_p", np.nan)
                     feed = self.feed_for(T); mkt, _ = feed.last_up() if feed else (np.nan, None)
                     plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)

@@ -22,8 +22,8 @@ to simulate trades and to evaluate; the BTC models never saw it.
 | A0: the same with the previous exits (TP 0.80 / SL 0.05 / T+240), kept as a shadow | 40 | +3.4 ¢ | +6.7 % | 64 % | 12.3 | 3.4 | $606 |
 | C: "B five seconds early" (T−5, δ = 0.08, bid at the last print until the open, TP 0.80 / SL 0.05 / T+240) | 40 | +2.6 ¢ | +5.2 % | 64 % | 7.2 | 2.8 | $1,950 |
 | A + B combined ($100 per trade) | 62 | — | **$17.7 k over 34 days** | — | 18.6 | — | $596 |
-| A + C + B (C first, B on the windows C did not fill) | 93 | — | **$27.4 k over 34 days** | — | 20.9 | — | $846 |
-| A + C + B + D | 103 | — | **$28.3 k over 34 days** | — | 21.0 | — | $815 |
+| **A + B + D (the running book)** | 72 | — | **$21.2 k over 34 days** | — | — | — | — |
+| A + C + B (C first, B on the rest; C not run) | 93 | — | $27.4 k over 34 days | — | 20.9 | — | $846 |
 
 Both strategies were selected on the tuning period (2026-08-20 → 2026-09-30) and then run once on the
 test period. They are also positive on the earlier, structurally different August 1–19 period.
@@ -86,7 +86,7 @@ in July (point-price rule, 195 trades) the previous exits did better (+2.7 vs +1
 * Robust on the test period in every slice (vol terciles, weekday/weekend, all ET hour buckets, both
   sides, slippage 0–3 ¢ → +5.9 … +4.9 ¢) and on the August regime (+4.5 ¢).
 
-### C — "B five seconds early" (added 2026-11-04, `research/preopen_fade.py`, `research/preopen_follow_check.py`)
+### C — "B five seconds early" (added 2026-11-04; **switched off 2026-11-05 at the user's request**, code kept behind `ENABLED` in `paper_trader.py`)
 
 At T−5 most of the 60-second reference window is already known and the book has usually left 0.50 on pre-open
 flow. The close head re-evaluated at T−5 is compared with the last print; when they disagree by ≥ 0.08 a bid rests at

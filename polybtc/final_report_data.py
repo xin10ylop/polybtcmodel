@@ -99,7 +99,8 @@ for c in ("C", "C+B", "A+C+B"):
     eq = comb3[c].cumsum(); print(f"{c}: total {eq.iloc[-1]:.0f}  maxdd {(eq.cummax()-eq).max():.0f}  worst day {comb3[c].min():.0f}  sharpe {comb3[c].mean()/comb3[c].std()*np.sqrt(365):.1f}  days {len(eq)}  trades/day {len(bc[(bc.date >= TEST[0]) & (bc.date <= TEST[1])]) / len(eq) if c == 'C+B' else len(cf[(cf.date >= TEST[0]) & (cf.date <= TEST[1])]) / len(eq):.1f}")
 print("corr daily A vs C+B:", round(comb3.A.corr(comb3["C+B"]), 3))
 rd = recs["D_high_confidence_settle"]; dd_ = daily(rd); comb3["D"] = dd_.reindex(comb3.index).fillna(0); comb3["A+C+B+D"] = comb3["A+C+B"] + comb3["D"]
-for c in ("D", "A+C+B+D"):
+comb3["A+B+D"] = comb3.A + comb3.B + comb3["D"]
+for c in ("D", "A+C+B+D", "A+B+D"):
     eq = comb3[c].cumsum(); print(f"{c}: total {eq.iloc[-1]:.0f}  maxdd {(eq.cummax()-eq).max():.0f}  worst day {comb3[c].min():.0f}  sharpe {comb3[c].mean()/comb3[c].std()*np.sqrt(365):.1f}  days {len(eq)}")
 summary["combined_test_daily_with_C"] = comb3.round(3).to_dict()
 # Kelly-style sizing from per-trade returns (B, test)
