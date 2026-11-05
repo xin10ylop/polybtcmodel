@@ -17,7 +17,7 @@ cd /home/user
 for r in btc-predict btc-movement btcmovement2; do [ -d $r ] || git clone $GH/$r.git; done        # model repos: default branch
 [ -d polybtcmodel ] || git clone -b $BR $GH/polybtcmodel.git
 git -C polybtcmodel pull -q                                         # this copy is the one that runs
-$SUDO apt-get install -y -qq git curl python3-venv python3-full > /dev/null
+$SUDO apt-get install -y -qq git curl python3-venv python3-full libgomp1 > /dev/null   # libgomp1: OpenMP runtime for LightGBM
 [ -d /home/user/venv ] || python3 -m venv /home/user/venv
 PY=/home/user/venv/bin/python3
 $PY -m pip install -q --upgrade pip
