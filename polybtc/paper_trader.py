@@ -9,7 +9,7 @@ format) up to its last day; the perp gap between the archive and now is syntheti
 
 Everything is logged to paper/: forecasts.jsonl (every window), paper_trades.jsonl, paper.log.
 Run:  python polybtc/paper_trader.py            (foreground; use nohup)
-      python polybtc/paper_trader.py --summary  (P&L report from the logs)
+      python polybtc/paper_trader.py --summary [--since 2026-11-05T13:20]  (P&L report from the logs, optionally only windows from that UTC instant on)
 """
 import os, sys, json, time, threading, datetime as dt, traceback
 import numpy as np, pandas as pd, requests, websocket
@@ -719,6 +719,9 @@ def summary():
     f = os.path.join(PAPER, "paper_trades.jsonl")
     if not os.path.exists(f): print("no trades yet"); return
     t = pd.read_json(f, lines=True)
+    if "--since" in sys.argv:                            # --since 2026-11-05T13:20  (UTC): only windows from that instant on
+        t_since = int(dt.datetime.fromisoformat(sys.argv[sys.argv.index("--since") + 1] + ("+00:00" if "+" not in sys.argv[sys.argv.index("--since") + 1] else "")).timestamp())
+        t = t[t["T"] >= t_since]; print(f"(trades with a window from {dt.datetime.fromtimestamp(t_since, dt.UTC):%Y-%m-%d %H:%M} UTC on)")
     if len(t) == 0: print("no trades yet"); return
     outs = {}
     for T in t["T"].unique():

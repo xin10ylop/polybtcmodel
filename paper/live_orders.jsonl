@@ -10,3 +10,7 @@
 {"event": "cancelled", "order_id": "dry-1793875501938", "filled": 0.0, "ts": 1793875512.37}
 {"event": "placed", "order_id": "dry-1793884157080", "strategy": "A", "T": 1793884200, "side": "UP", "price": 0.5, "size": 20.0, "kind": "buy", "status": "live", "taker": false, "ts": 1793884157.08}
 {"event": "cancelled", "order_id": "dry-1793884157080", "filled": 0.0, "ts": 1793884160.29}
+{"event": "placed", "order_id": "dry-1793889391787", "strategy": "D", "T": 1793889300, "side": "DOWN", "price": 0.88, "size": 11.36, "kind": "buy", "status": "live", "taker": false, "ts": 1793889391.79}
+{"event": "cancelled", "order_id": "dry-1793889391787", "filled": 0.0, "ts": 1793889402.22}
+{"event": "placed", "order_id": "dry-1793889602437", "strategy": "B", "T": 1793889600, "side": "DOWN", "price": 0.62, "size": 16.12, "kind": "buy", "status": "live", "taker": false, "ts": 1793889602.44}
+{"event": "cancelled", "order_id": "dry-1793889602437", "filled": 0.0, "ts": 1793889612.47}
