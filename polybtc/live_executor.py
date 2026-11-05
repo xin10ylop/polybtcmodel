@@ -10,6 +10,8 @@ Sizing: STAKE_USD per trade at the entry price, rounded to the market's size pre
 Risk: MAX_OPEN positions, DAILY_LOSS_LIMIT (stop opening new trades for the UTC day once realised P&L is below it),
 and a kill file (touch /home/user/paper/STOP) that cancels all open orders and stops new ones.
 DRY_RUN=1 logs every order it would place without touching the account.
+Fees: every order is post-only (maker), so no taker fee is ever paid; an order that would cross the book is not placed
+(ALLOW_TAKER=1 re-sends it crossing and books the fee). The tally reports fees paid, which should read $0.00.
 
 Environment: POLYMARKET_PRIVATE_KEY (signer key), POLYMARKET_WALLET_ADDRESS (account wallet), and for redemption
 POLYMARKET_RELAYER_API_KEY + POLYMARKET_RELAYER_API_KEY_ADDRESS (polymarket.com -> Settings -> API Keys -> Relayer).
@@ -22,6 +24,7 @@ MIN_SHARES = 5.0
 MAX_OPEN = int(os.environ.get("MAX_OPEN", "3"))
 DAILY_LOSS_LIMIT = float(os.environ.get("DAILY_LOSS_LIMIT", "-100"))
 DRY_RUN = os.environ.get("DRY_RUN", "1") == "1"
+ALLOW_TAKER = os.environ.get("ALLOW_TAKER", "0") == "1"   # default: post-only everywhere, a fee can never be paid
 PAPER = os.environ.get("PAPER_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "paper")
 STOP_FILE = os.path.join(PAPER, "STOP")
 LOG = open(os.path.join(PAPER, "live.log"), "a")
@@ -105,12 +108,16 @@ class LiveExecutor:
         return max(MIN_SHARES, math.floor(STAKE_USD / price * 100) / 100)
 
     def _place(self, token, side, price, size):
-        """Post-only first (maker, no fee); if the exchange rejects it because the price would cross the book, place the
-        same limit crossing (taker: fee 0.07 p(1-p) per share, booked on the fill). Returns (order, taker_flag)."""
+        """Every order is post-only: it rests on the book and can only ever be filled as a maker (no fee). If the exchange
+        rejects it because the price would cross the book, the order is NOT placed (a BUY is skipped, a SELL falls back to
+        holding to settlement) unless ALLOW_TAKER=1, in which case the same limit is re-sent crossing and the taker fee
+        0.07 p(1-p) per share is booked on the fill. Returns (order, taker_flag)."""
         try:
             return self.sdk.limit(token, side, price, size, post_only=True), False
         except Exception as e:
-            log(f"post-only {side} @{price:.2f} rejected ({repr(e)[:100]}); placing as a crossing limit")
+            if not ALLOW_TAKER:
+                log(f"post-only {side} @{price:.2f} rejected ({repr(e)[:100]}); not placed (ALLOW_TAKER=0: never pay a fee)"); raise
+            log(f"post-only {side} @{price:.2f} rejected ({repr(e)[:100]}); placing as a crossing limit (ALLOW_TAKER=1)")
             return self.sdk.limit(token, side, price, size, post_only=False), True
 
     # ---------------------------------------------------------------- decisions from the paper trader
@@ -145,7 +152,7 @@ class LiveExecutor:
                 self._rec(self.fo, event="placed", order_id=r["order_id"], strategy=o["strategy"], T=o["T"], side=o["side"], price=o["tp"], size=p["size"], kind="sell", status=r.get("status"), taker=taker)
                 log(f"[{o['strategy']}] SELL limit @{o['tp']:.2f} x{p['size']:.2f} order {r['order_id']}{' TAKER' if taker else ''}")
             except Exception as e:
-                log(f"[{o['strategy']}] SELL limit FAILED: {repr(e)[:160]}")
+                log(f"[{o['strategy']}] SELL limit not placed ({repr(e)[:120]}); holding to settlement")
 
     def _on_sell_fill(self, oid, matched):
         o = self.orders[oid]; new = matched - o["filled"]
@@ -205,4 +212,5 @@ class LiveExecutor:
     def summary(self):
         tr = [json.loads(l) for l in open(os.path.join(PAPER, "live_trades.jsonl")) if l.strip()] if os.path.exists(os.path.join(PAPER, "live_trades.jsonl")) else []
         pnl = sum(t.get("pnl", 0.0) for t in tr); n = len([t for t in tr if t["event"] in ("settle", "fill") and t.get("kind") != "buy"])
-        return f"live: {len([t for t in tr if t['event']=='fill' and t.get('kind')=='buy'])} buys, {n} closes, realised pnl ${pnl:+.2f}"
+        fees = sum(t.get("fee", 0.0) for t in tr); nt = len([t for t in tr if t.get("fee", 0.0) > 0])
+        return f"live: {len([t for t in tr if t['event']=='fill' and t.get('kind')=='buy'])} buys, {n} closes, realised pnl ${pnl:+.2f}, fees paid ${fees:.2f} on {nt} taker fills"

@@ -178,7 +178,7 @@ reports/          summary.json, B_exit_grid.csv, trades_*.csv
 
 **Execution layer (`polybtc/live_executor.py`, 2026-11-05).** With `LIVE=1` the paper trader hands every A / B / D decision
 to an executor built on Polymarket's official Python SDK (`polymarket-client`): A rests a BUY at 0.50 at T−45 and cancels it
-at T−40 if unfilled; B and D rest a BUY at the last print and cancel after 10 s; a fill gets a post-only SELL at 0.85 (A, B); every order is sent post-only first and, if the exchange rejects it because it would cross the book, re-sent as a crossing limit with the taker fee 0.07·p(1−p) booked on the fill;
+at T−40 if unfilled; B and D rest a BUY at the last print and cancel after 10 s; a fill gets a post-only SELL at 0.85 (A, B); every order is post-only (maker, no fee); one that would cross the book is not placed (a BUY is skipped, a SELL falls back to holding to settlement) unless `ALLOW_TAKER=1`, which re-sends it crossing and books the taker fee 0.07·p(1−p) on the fill; the tally prints the fees paid, which should read $0.00;
 anything unsold at the close settles and is redeemed through the Relayer (gasless, needs a Relayer API key from
 polymarket.com → Settings → API Keys). Sizing `STAKE_USD` per trade (min 5 shares), `MAX_OPEN` positions, `DAILY_LOSS_LIMIT`
 (no new trades for the UTC day below it), kill file `PAPER_DIR/STOP` (cancels open buys, blocks new ones). `DRY_RUN=1`
