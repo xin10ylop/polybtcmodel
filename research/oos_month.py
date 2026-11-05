@@ -44,7 +44,7 @@ def trades_A(cfg, master, mk, g):   # same as final_report_data.trades_A2 (live 
 def run(cfg, fn, label):
     m, sim, p, side, sel, _ = fn(cfg, master, mk, g)
     idx = np.arange(len(m)); pnl = np.where(sel, sim["pnl"][idx, side, 0, 0, 0], np.nan)
-    k = sim["kind"][idx, side, 0, 0, 0]; entry = sim["entry_px"][idx, side]
+    k = sim["kind"][idx, side, 0, 0, 0]; entry = sim["entry_px"][idx, side]; tex = sim["texit"][idx, side, 0, 0, 0]
     s = (m.date.values >= first) & (m.date.values <= last)
     r = se.metrics(np.where(s, pnl, np.nan), m.date.values)
     r["signals"] = int((sel & s).sum()); r["fill_rate"] = float(np.isfinite(pnl[sel & s]).mean()) if (sel & s).sum() else np.nan
@@ -52,7 +52,7 @@ def run(cfg, fn, label):
     r["p_tp"] = float(np.mean(k[f] == 0)) if f.sum() else np.nan; r["p_sl"] = float(np.mean(k[f] == 1)) if f.sum() else np.nan; r["avg_entry"] = float(np.nanmean(entry[f])) if f.sum() else np.nan
     r["trades_per_day"] = r["n"] / max(r.get("days", 1), 1)
     rec = pd.DataFrame({"T": m.index.values[f], "date": m.date.values[f], "side": np.where(side[f] == 0, "UP", "DOWN"), "signal": p[f], "entry_px": entry[f],
-                        "exit_kind": k[f], "pnl": pnl[f], "up": m.up.values[f]})
+                        "exit_kind": k[f], "exit_rel": tex[f], "pnl": pnl[f], "up": m.up.values[f]})
     usd = (rec.pnl / rec.entry_px * 100).groupby(rec.date).sum() if len(rec) else pd.Series(dtype=float)
     eq = usd.cumsum(); r["usd_total"] = float(eq.iloc[-1]) if len(eq) else 0.0; r["usd_maxdd"] = float((eq.cummax() - eq).max()) if len(eq) else 0.0
     r["usd_worst_day"] = float(usd.min()) if len(usd) else 0.0; r["neg_days"] = int((usd < 0).sum()); r["usd_per_day"] = float(usd.mean()) if len(usd) else 0.0
