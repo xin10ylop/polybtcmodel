@@ -611,11 +611,18 @@ def summary():
     t["resolved_up"] = t["T"].map(outs)
     t["settle_pnl"] = np.where(t.resolved_up.isna(), np.nan, np.where((t.resolved_up == 1) == (t.side == "UP"), 1.0, 0.0) - t.entry)
     pd.set_option("display.width", 220)
-    for s, g in t.groupby("strategy"):
+    SHADOW = {"A0": "A", "B0": "B"}                      # old exits replayed on the same entries, for comparison only
+    live = t[~t.strategy.isin(SHADOW)]
+    for s, g in live.groupby("strategy"):
         w_, l_ = g.pnl[g.pnl > 0].mean(), g.pnl[g.pnl <= 0].mean(); be = (-l_ / (w_ - l_)) if np.isfinite(w_) and np.isfinite(l_) and w_ > l_ else np.nan
         print(f"\n== strategy {s}: {len(g)} trades, mean pnl/share {g.pnl.mean():+.4f}, win {np.mean(g.pnl > 0):.2%} (break-even {be:.1%} from avg win {w_:+.3f} / avg loss {l_:+.3f}), total {g.pnl.sum():+.3f}, "
               f"settle-equivalent {g.settle_pnl.mean():+.4f} | exits {g.exit_kind.value_counts().to_dict()}")
-    print(f"\n== all strategies combined: {len(t)} trades, total {t.pnl.sum():+.3f} per share; at $100 per trade: ${(t.pnl / t.entry * 100).sum():+.0f}")
+    print(f"\n== all live strategies combined: {len(live)} trades, total {live.pnl.sum():+.3f} per share; at $100 per trade: ${(live.pnl / live.entry * 100).sum():+.0f}")
+    for sh, base in SHADOW.items():
+        g0 = t[t.strategy == sh]
+        if not len(g0): continue
+        g1 = t[(t.strategy == base) & t["T"].isin(g0["T"])]
+        print(f"   shadow {sh} (old exits on the same {len(g0)} entries): {g0.pnl.sum():+.3f} per share, win {np.mean(g0.pnl > 0):.0%}  vs  {base} on those windows: {g1.pnl.sum():+.3f}, win {np.mean(g1.pnl > 0):.0%}")
     print(t.tail(15)[["strategy", "T", "side", "p_model", "market", "entry", "fill_time", "exit_kind", "exit_time", "exit", "pnl", "resolved_up"]].round(3).to_string(index=False))
 
 
