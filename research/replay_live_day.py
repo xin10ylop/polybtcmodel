@@ -53,21 +53,22 @@ while clock[0] < D1 + 5:
     for T in Ts:
         if T not in doneA and now >= T - 43.5 and tl.known >= (T - 45) - tl.t0_epoch:
             doneA.add(T); fc = model.forecast(T, -45, 0); i = T - 46 - tl.t0_epoch
-            rows.append(dict(T=T, k="A", live=fc.get("close_p"), h10=fc.get("h10_p"), arch=m["m2_-45_close_p"].get(T, np.nan), arch_h10=m["m2_-45_h10_p"].get(T, np.nan), synth=int(tl.synth[i - 59:i + 1].sum()), ffill=int(tl.ffill[i - 59:i + 1].sum()), delay=round(now - (T - 43.5), 2)))
+            rows.append(dict(T=T, k="A", live=fc.get("close_p"), h10=fc.get("h10_p"), arch=m["m2_-45_close_p"].get(T, np.nan), arch_h10=m["m2_-45_h10_p"].get(T, np.nan), synth=int(tl.synth[i - 59:i + 1].sum()), ffilled=int(tl.ffill[i - 59:i + 1].sum()), delay=round(now - (T - 43.5), 2)))
         if T not in doneB and T + 1.6 <= now < T + 10 and tl.known >= T - tl.t0_epoch:
             doneB.add(T); fc = model.forecast(T, -pt.LAG, pt.LAG); i = T - 1 - tl.t0_epoch
-            rows.append(dict(T=T, k="B", live=fc.get("close_p"), arch=m["m2_0_close_p"].get(T, np.nan), synth=int(tl.synth[i - 59:i + 1].sum()), ffill=int(tl.ffill[i - 59:i + 1].sum()), delay=round(now - (T + 1.6), 2)))
+            rows.append(dict(T=T, k="B", live=fc.get("close_p"), arch=m["m2_0_close_p"].get(T, np.nan), synth=int(tl.synth[i - 59:i + 1].sum()), ffilled=int(tl.ffill[i - 59:i + 1].sum()), delay=round(now - (T + 1.6), 2)))
     if int(now) % 3600 == 0 and abs(now - int(now)) < TICK / 2: print(f"  {dt.datetime.fromtimestamp(now, dt.UTC):%H:%M} ({time.time() - t_w:.0f}s)", flush=True)
     clock[0] += TICK
 df = pd.DataFrame(rows); df["err"] = df.live - df.arch
+out = f"/home/user/polybtcmodel/paper/replay_live_{day}{'_old' if OLD else ''}.csv"; df.round(5).to_csv(out, index=False)
 print(f"\n== live-path replay of {day} ({'OLD clock rule' if OLD else 'fixed rule'}): spot delay {SPOT_DELAY}s, perp delay {PERP_DELAY}s")
 for k, thr in (("A", 0.05), ("B", None)):
     q = df[(df.k == k)].dropna(subset=["live", "arch"])
     flips = (np.sign(q.live - 0.5) != np.sign(q.arch - 0.5)).mean()
-    line = f"{k}: n={len(q)}  mean |live-archive| {q.err.abs().mean():.4f}  max {q.err.abs().max():.4f}  signed mean {q.err.mean():+.4f}  side flips {flips:.1%}  decisions late by {q.delay.median():.2f}s (max {q.delay.max():.2f})  synthetic/ffilled seconds used: {int(q.synth.sum())}/{int(q.ffill.sum())}"
+    line = f"{k}: n={len(q)}  mean |live-archive| {q.err.abs().mean():.4f}  max {q.err.abs().max():.4f}  signed mean {q.err.mean():+.4f}  side flips {flips:.1%}  decisions late by {q.delay.median():.2f}s (max {q.delay.max():.2f})  synthetic/ffilled seconds used: {int(q["synth"].sum())}/{int(q["ffilled"].sum())}"
     if thr:
         dl = (q.live - 0.5).abs() >= thr; da = (q.arch - 0.5).abs() >= thr
         line += f"\n   confident (>= 0.05): live {dl.mean():.1%} vs archive {da.mean():.1%}; trade/no-trade differs on {(dl != da).mean():.1%}; mean |p-0.5| live {(q.live-0.5).abs().mean():.4f} vs archive {(q.arch-0.5).abs().mean():.4f}"
         line += f"\n   h10 head: mean live {q.h10.mean():.3f} vs archive {q.arch_h10.mean():.3f}, mean |diff| {(q.h10 - q.arch_h10).abs().mean():.4f}"
     print(line)
-out = f"/home/user/polybtcmodel/paper/replay_live_{day}{'_old' if OLD else ''}.csv"; df.round(5).to_csv(out, index=False); print("saved", out)
+print("saved", out)
