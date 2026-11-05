@@ -262,6 +262,29 @@ def okx_ws(tl, stop):
             log("okx poll error", repr(e)[:120]); time.sleep(2)
 
 
+def binance_perp_ws(tl, stop):
+    """Binance USDT-M perp aggTrades (the archive's own source) - only reachable from a non-US host. PERP_FEED=binance selects it."""
+    CT = 1.0
+    while not stop.is_set():
+        try:
+            ws = websocket.create_connection("wss://fstream.binance.com/ws/btcusdt@aggTrade", timeout=30)
+            while not stop.is_set():
+                d = json.loads(ws.recv())
+                if d.get("e") != "aggTrade": continue
+                sec = int(d["T"]) // 1000; px = float(d["p"]); q = float(d["q"]) * CT; buy = not d["m"]   # buyer is taker when not maker
+                with tl.lock:
+                    b = tl.perp_pending.get(sec)
+                    if b is None:
+                        b = tl.perp_pending[sec] = dict(p_open=px, p_high=px, p_low=px, p_close=px, p_buy=0.0, p_sell=0.0, p_ntr=0, p_maxq=0.0, pv=0.0, vv=0.0, p_nb=0, p_lbv=0.0, p_lsv=0.0)
+                    b["p_high"] = max(b["p_high"], px); b["p_low"] = min(b["p_low"], px); b["p_close"] = px
+                    b["p_buy" if buy else "p_sell"] += q; b["p_ntr"] += 1; b["p_maxq"] = max(b["p_maxq"], q); b["pv"] += px * q; b["vv"] += q
+                    if buy: b["p_nb"] += 1
+                    if q >= 1.0: b["p_lbv" if buy else "p_lsv"] += q
+                    tl.last_perp_sec = max(tl.perp_pending) if tl.perp_pending else None
+        except Exception as e:
+            log("binance perp ws error", repr(e)[:120]); time.sleep(2)
+
+
 class PolyFeed:
     """Websocket subscription for one window's two tokens; records UP-equivalent prints and books."""
     def __init__(self, T, token_up, token_down):
@@ -433,7 +456,9 @@ class Trader:
         self.tl = LiveTimeline(t0); self.stop = threading.Event()
         backfill(self.tl)
         threading.Thread(target=spot_ws, args=(self.tl, self.stop), daemon=True).start()
-        threading.Thread(target=okx_ws, args=(self.tl, self.stop), daemon=True).start()
+        PERP_FEED = os.environ.get("PERP_FEED", "okx")      # 'binance' (archive-identical, needs a non-US host) or 'okx' (lags Binance ~1 s)
+        log(f"perp feed: {PERP_FEED}")
+        threading.Thread(target=binance_perp_ws if PERP_FEED == "binance" else okx_ws, args=(self.tl, self.stop), daemon=True).start()
         threading.Thread(target=eth_ws, args=(self.tl, self.stop), daemon=True).start()
         from bp_live import BPLive
         self.bp = BPLive(); self.bp_z = {}
