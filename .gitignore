@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 *.log
 data/
+
+.claude/settings.local.json
