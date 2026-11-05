@@ -101,9 +101,11 @@ class LiveTimeline:
         if 0 <= i < self.cap:
             self.a["e_c"][i], self.a["e_v"][i], self.a["e_bv"][i] = c, v, bv
 
-    def finalize_to(self, sec):
-        """Mark seconds < sec as known: forward-fill missing prices, synthesize missing perp from spot."""
-        j = sec - self.t0_epoch
+    def finalize_to(self, sec, perp_through=None):
+        """Mark seconds < sec as known: forward-fill missing spot prices; a second with no perp trades while the perp feed is live
+        (second <= perp_through) is filled the way the archive's feature base treats it (price forward-filled, zero volume); a
+        second beyond the feed's coverage (outage) is synthesized from spot and flagged."""
+        j = sec - self.t0_epoch; pt_ = (perp_through - self.t0_epoch) if perp_through is not None else -1
         if j <= self.known: return
         a = self.a; lo, hi = self.known, j
         # forward-fill the close first (gaps from feed outages), then derive open/high/low from it
@@ -118,6 +120,11 @@ class LiveTimeline:
             if m.sum() >= 300: self.basis_live = float(np.median(a["p_close"][w0:lo][m] / a["s_close"][w0:lo][m]))
         basis = self.basis_live if self.basis_live is not None else self.basis
         for t in range(lo, hi):
+            if np.isnan(a["p_close"][t]) and t <= pt_ and t > 0 and np.isfinite(a["p_close"][t - 1]):   # empty second on a live feed: archive-style
+                px = a["p_close"][t - 1]
+                a["p_open"][t] = a["p_high"][t] = a["p_low"][t] = a["p_close"][t] = a["p_vwap"][t] = px
+                a["p_buy"][t] = a["p_sell"][t] = 0.0; a["p_ntr"][t] = 0; a["p_maxq"][t] = 0.0; a["p_nb"][t] = 0; a["p_lbv"][t] = a["p_lsv"][t] = 0.0; a["p_qv"][t] = 0.0
+                continue
             if np.isnan(a["p_close"][t]):
                 px = a["s_close"][t] * basis
                 a["p_open"][t] = a["p_high"][t] = a["p_low"][t] = a["p_close"][t] = a["p_vwap"][t] = px
@@ -562,11 +569,11 @@ class Trader:
         with tl.lock:
             for s_ in sorted(s for s in tl.perp_pending if s < sec):
                 bb = tl.perp_pending.pop(s_); bb["p_vwap"] = bb["pv"] / bb["vv"] if bb["vv"] > 0 else bb["p_close"]; tl.set_perp(s_, bb)
-            lim = sec
+            lim = sec; perp_live = tl.last_perp_commit is not None and now - (tl.last_perp_commit + 1) < self.GAP
             if tl.last_spot_sec is not None and now - (tl.last_spot_sec + 1) < self.GAP: lim = min(lim, tl.last_spot_sec + 1)
-            if tl.last_perp_commit is not None and now - (tl.last_perp_commit + 1) < self.GAP: lim = min(lim, tl.last_perp_commit + 1)
+            if perp_live: lim = min(lim, tl.last_perp_commit + 1)
             if tl.last_perp_commit is None and tl.last_perp_sec is not None: lim = min(lim, tl.last_perp_sec)   # feed up but nothing committed yet
-        tl.finalize_to(lim)
+        tl.finalize_to(lim, perp_through=tl.last_perp_commit if perp_live else None)
 
     def run(self):
         log("paper trader started"); last_T = None; t_start = time.time()
