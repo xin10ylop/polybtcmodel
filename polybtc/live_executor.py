@@ -32,6 +32,11 @@ def log(*a):
     print(s, flush=True); LOG.write(s + "\n"); LOG.flush()
 
 
+def taker_fee(price, size):
+    """Polymarket taker fee on the 5-minute markets: 0.07 * p * (1 - p) per share (feeRateBps 700, exponent 1); makers pay nothing."""
+    return 0.07 * price * (1.0 - price) * size
+
+
 class SDK:
     """Thin wrapper over the official SDK so the executor can be exercised without it (DRY_RUN) and so that
     method names live in one place. Fill in from docs.polymarket.com/trading/manage-orders if the SDK differs."""
@@ -99,6 +104,15 @@ class LiveExecutor:
     def _size(price):
         return max(MIN_SHARES, math.floor(STAKE_USD / price * 100) / 100)
 
+    def _place(self, token, side, price, size):
+        """Post-only first (maker, no fee); if the exchange rejects it because the price would cross the book, place the
+        same limit crossing (taker: fee 0.07 p(1-p) per share, booked on the fill). Returns (order, taker_flag)."""
+        try:
+            return self.sdk.limit(token, side, price, size, post_only=True), False
+        except Exception as e:
+            log(f"post-only {side} @{price:.2f} rejected ({repr(e)[:100]}); placing as a crossing limit")
+            return self.sdk.limit(token, side, price, size, post_only=False), True
+
     # ---------------------------------------------------------------- decisions from the paper trader
     def buy(self, strategy, T, side, price, cancel_at, token_up, token_down, condition_id, tp):
         """Rest a BUY limit for `strategy` on `side` at `price`; cancel at epoch `cancel_at` if unfilled; sell limit `tp` after the fill (None = hold)."""
@@ -106,12 +120,12 @@ class LiveExecutor:
             if not self._can_open(strategy): return None
             token = token_up if side == "UP" else token_down; size = self._size(price)
             try:
-                r = self.sdk.limit(token, "BUY", price, size)
+                r, taker = self._place(token, "BUY", price, size)
             except Exception as e:
                 log(f"[{strategy}] BUY {side} @{price:.2f} x{size} FAILED: {repr(e)[:160]}"); return None
-            oid = r["order_id"]; self.orders[oid] = dict(strategy=strategy, T=T, side=side, token=token, cond=condition_id, price=price, size=size, kind="buy", cancel_at=cancel_at, filled=0.0, tp=tp, placed=time.time())
-            self._rec(self.fo, event="placed", order_id=oid, strategy=strategy, T=T, side=side, price=price, size=size, kind="buy", status=r.get("status"))
-            log(f"[{strategy}] BUY {side} @{price:.2f} x{size} order {oid} status {r.get('status')}")
+            oid = r["order_id"]; self.orders[oid] = dict(strategy=strategy, T=T, side=side, token=token, cond=condition_id, price=price, size=size, kind="buy", cancel_at=cancel_at, filled=0.0, tp=tp, placed=time.time(), taker=taker)
+            self._rec(self.fo, event="placed", order_id=oid, strategy=strategy, T=T, side=side, price=price, size=size, kind="buy", status=r.get("status"), taker=taker)
+            log(f"[{strategy}] BUY {side} @{price:.2f} x{size} order {oid} status {r.get('status')}{' TAKER' if taker else ''}")
             if r.get("status") == "matched": self._on_fill(oid, size)
             return oid
 
@@ -121,15 +135,15 @@ class LiveExecutor:
         o["filled"] = matched
         key = (o["strategy"], o["T"])
         p = self.positions.setdefault(key, dict(side=o["side"], token=o["token"], cond=o["cond"], size=0.0, entry=o["price"], sell_order=None, settled=False, sold=0.0, pnl=0.0))
-        p["size"] += new
-        self._rec(self.ft, event="fill", order_id=oid, strategy=o["strategy"], T=o["T"], side=o["side"], price=o["price"], size=new, kind="buy")
-        log(f"[{o['strategy']}] FILLED {o['side']} @{o['price']:.2f} x{new:.2f} (T{time.time()-o['T']:+.1f}s)")
+        p["size"] += new; fee = taker_fee(o["price"], new) if o.get("taker") else 0.0; p["pnl"] -= fee; self.day_pnl -= fee
+        self._rec(self.ft, event="fill", order_id=oid, strategy=o["strategy"], T=o["T"], side=o["side"], price=o["price"], size=new, kind="buy", fee=round(fee, 4), pnl=round(-fee, 4))
+        log(f"[{o['strategy']}] FILLED {o['side']} @{o['price']:.2f} x{new:.2f} (T{time.time()-o['T']:+.1f}s)" + (f" taker fee {fee:.2f}" if fee else ""))
         if o["tp"] is not None and p["sell_order"] is None:
             try:
-                r = self.sdk.limit(o["token"], "SELL", o["tp"], p["size"], post_only=True)
-                p["sell_order"] = r["order_id"]; self.orders[r["order_id"]] = dict(strategy=o["strategy"], T=o["T"], side=o["side"], token=o["token"], cond=o["cond"], price=o["tp"], size=p["size"], kind="sell", cancel_at=None, filled=0.0, tp=None, placed=time.time())
-                self._rec(self.fo, event="placed", order_id=r["order_id"], strategy=o["strategy"], T=o["T"], side=o["side"], price=o["tp"], size=p["size"], kind="sell", status=r.get("status"))
-                log(f"[{o['strategy']}] SELL limit @{o['tp']:.2f} x{p['size']:.2f} order {r['order_id']}")
+                r, taker = self._place(o["token"], "SELL", o["tp"], p["size"])
+                p["sell_order"] = r["order_id"]; self.orders[r["order_id"]] = dict(strategy=o["strategy"], T=o["T"], side=o["side"], token=o["token"], cond=o["cond"], price=o["tp"], size=p["size"], kind="sell", cancel_at=None, filled=0.0, tp=None, placed=time.time(), taker=taker)
+                self._rec(self.fo, event="placed", order_id=r["order_id"], strategy=o["strategy"], T=o["T"], side=o["side"], price=o["tp"], size=p["size"], kind="sell", status=r.get("status"), taker=taker)
+                log(f"[{o['strategy']}] SELL limit @{o['tp']:.2f} x{p['size']:.2f} order {r['order_id']}{' TAKER' if taker else ''}")
             except Exception as e:
                 log(f"[{o['strategy']}] SELL limit FAILED: {repr(e)[:160]}")
 
@@ -137,8 +151,8 @@ class LiveExecutor:
         o = self.orders[oid]; new = matched - o["filled"]
         if new <= 0: return
         o["filled"] = matched; key = (o["strategy"], o["T"]); p = self.positions[key]
-        p["sold"] += new; pnl = (o["price"] - p["entry"]) * new; p["pnl"] += pnl; self.day_pnl += pnl
-        self._rec(self.ft, event="fill", order_id=oid, strategy=o["strategy"], T=o["T"], side=o["side"], price=o["price"], size=new, kind="sell", pnl=round(pnl, 4))
+        p["sold"] += new; fee = taker_fee(o["price"], new) if o.get("taker") else 0.0; pnl = (o["price"] - p["entry"]) * new - fee; p["pnl"] += pnl; self.day_pnl += pnl
+        self._rec(self.ft, event="fill", order_id=oid, strategy=o["strategy"], T=o["T"], side=o["side"], price=o["price"], size=new, kind="sell", fee=round(fee, 4), pnl=round(pnl, 4))
         log(f"[{o['strategy']}] SOLD @{o['price']:.2f} x{new:.2f}  pnl {pnl:+.2f}  (day {self.day_pnl:+.2f})")
         if p["sold"] >= p["size"] - 1e-6: p["settled"] = True
 
