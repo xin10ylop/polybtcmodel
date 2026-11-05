@@ -30,7 +30,7 @@ echo "== start the paper trader (auto-restart loop, logs in /home/user/paper/, o
 export PAPER_DIR=/home/user/paper; mkdir -p $PAPER_DIR
 cd /home/user/polybtcmodel
 for pid in $(ps -eo pid,cmd | awk '/[p]aper_trader.py/ {print $1}'); do kill $pid; done; sleep 2    # one trader only
-export PERP_FEED=${PERP_FEED:-okx}     # set PERP_FEED=binance on a host where fstream.binance.com is reachable (non-US): the archive-identical feed
+export PERP_FEED=${PERP_FEED:-okx}     # PERP_FEED=binance (stream) or binance_rest (polling) on a non-US host; okx otherwise
 nohup bash -c 'while true; do /home/user/venv/bin/python3 -W ignore polybtc/paper_trader.py >> $PAPER_DIR/stdout.log 2>&1; echo "trader exited $(date -u)" >> $PAPER_DIR/stdout.log; sleep 5; done' > /dev/null 2>&1 &
 sleep 5; tail -3 $PAPER_DIR/paper.log 2>/dev/null || true
 echo "running.  log:   tail -f /home/user/paper/paper.log"

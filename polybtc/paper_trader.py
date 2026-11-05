@@ -292,6 +292,41 @@ def binance_perp_ws(tl, stop):
             log("binance perp ws error", repr(e)[:120]); time.sleep(2)
 
 
+def binance_perp_rest(tl, stop):
+    """Binance USDT-M perp aggTrades by REST polling (fromId pages of 1000, ~0.6 s cadence: weight 20 each, 2,400/min limit).
+    Same venue and timestamps as the archive; used where the futures stream is filtered (e.g. Germany) but REST answers."""
+    last_id = None; S_ = requests.Session()
+    while not stop.is_set():
+        try:
+            if last_id is None:
+                rows = S_.get("https://fapi.binance.com/fapi/v1/aggTrades", params=dict(symbol="BTCUSDT", limit=1000), timeout=10).json()
+            else:
+                rows = []
+                for _ in range(5):
+                    d = S_.get("https://fapi.binance.com/fapi/v1/aggTrades", params=dict(symbol="BTCUSDT", fromId=last_id + 1, limit=1000), timeout=10).json()
+                    if not isinstance(d, list) or not d: break
+                    rows += d; last_id = int(d[-1]["a"])
+                    if len(d) < 1000: break
+            if isinstance(rows, list) and rows:
+                last_id = int(rows[-1]["a"])
+                with tl.lock:
+                    for d in rows:
+                        sec = int(d["T"]) // 1000; px = float(d["p"]); q = float(d["q"]); buy = not d["m"]
+                        b = tl.perp_pending.get(sec)
+                        if b is None:
+                            b = tl.perp_pending[sec] = dict(p_open=px, p_high=px, p_low=px, p_close=px, p_buy=0.0, p_sell=0.0, p_ntr=0, p_maxq=0.0, pv=0.0, vv=0.0, p_nb=0, p_lbv=0.0, p_lsv=0.0)
+                        b["p_high"] = max(b["p_high"], px); b["p_low"] = min(b["p_low"], px); b["p_close"] = px
+                        b["p_buy" if buy else "p_sell"] += q; b["p_ntr"] += 1; b["p_maxq"] = max(b["p_maxq"], q); b["pv"] += px * q; b["vv"] += q
+                        if buy: b["p_nb"] += 1
+                        if q >= 1.0: b["p_lbv" if buy else "p_lsv"] += q
+                    tl.last_perp_sec = max(tl.perp_pending) if tl.perp_pending else None
+            elif isinstance(rows, dict):
+                log("binance perp rest:", str(rows)[:100]); time.sleep(5)
+            time.sleep(0.6)
+        except Exception as e:
+            log("binance perp rest error", repr(e)[:120]); time.sleep(2)
+
+
 class PolyFeed:
     """Websocket subscription for one window's two tokens; records UP-equivalent prints and books."""
     def __init__(self, T, token_up, token_down):
@@ -463,9 +498,10 @@ class Trader:
         self.tl = LiveTimeline(t0); self.stop = threading.Event()
         backfill(self.tl)
         threading.Thread(target=spot_ws, args=(self.tl, self.stop), daemon=True).start()
-        PERP_FEED = os.environ.get("PERP_FEED", "okx")      # 'binance' (archive-identical, needs a non-US host) or 'okx' (lags Binance ~1 s)
+        PERP_FEED = os.environ.get("PERP_FEED", "okx")      # 'binance' (stream), 'binance_rest' (polling, where the stream is filtered), 'okx' (lags Binance ~1 s)
         log(f"perp feed: {PERP_FEED}")
-        threading.Thread(target=binance_perp_ws if PERP_FEED == "binance" else okx_ws, args=(self.tl, self.stop), daemon=True).start()
+        feed_fn = {"binance": binance_perp_ws, "binance_rest": binance_perp_rest}.get(PERP_FEED, okx_ws)
+        threading.Thread(target=feed_fn, args=(self.tl, self.stop), daemon=True).start()
         threading.Thread(target=eth_ws, args=(self.tl, self.stop), daemon=True).start()
         from bp_live import BPLive
         self.bp = BPLive(); self.bp_z = {}
