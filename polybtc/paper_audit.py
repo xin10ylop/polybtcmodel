@@ -52,14 +52,17 @@ def bias(day, fcs):
         R = [r for r in fcs if r["strategy"] == st and t0 <= r["T"] < t1 and np.isfinite(r.get(head, np.nan))]
         if len(R) < 10: continue
         p = np.array([r[head] for r in R]); down = float((p < 0.5).mean()); one = max(down, 1 - down)
+        dev = np.abs(p - 0.5); spread = float(dev.mean()); mx = float(dev.max()); conf = float((dev >= 0.05).mean())
         syn = [r.get("synth_last60") for r in R if r.get("synth_last60") is not None]; ff = [r.get("ffill_last60") for r in R if r.get("ffill_last60") is not None]
-        res[st] = dict(n=len(R), mean=float(p.mean()), share_below_half=down, one_sided=one, synth_decisions=int(sum(1 for x in syn if x)), ffill_decisions=int(sum(1 for x in ff if x)), counted=len(syn))
+        res[st] = dict(n=len(R), mean=float(p.mean()), share_below_half=down, one_sided=one, spread=spread, max_dev=mx, confident_share=conf, synth_decisions=int(sum(1 for x in syn if x)), ffill_decisions=int(sum(1 for x in ff if x)), counted=len(syn))
         flag = []
+        if st == "A" and len(R) >= 26 and mx < 0.03: flag.append(f"FLAT (max |p-0.5| {mx:.3f} over {len(R)} windows; the archive never has 26 consecutive windows all within 0.025 of 0.5)")
+        if st == "A" and len(R) >= 50 and spread < 0.015: flag.append(f"FLAT (mean |p-0.5| {spread:.3f}; archive 0.029-0.038 over a period, 0.012-0.06 over a day)")
         if one > 0.80: flag.append(f"ONE-SIDED ({one:.0%} of forecasts on one side; archive max over 30-window stretches 0.87, over a day 0.62)")
         if st == "A" and not 0.46 <= p.mean() <= 0.56: flag.append(f"MEAN HEAD {p.mean():.3f} outside the archive range 0.465-0.559")
         if res[st]["synth_decisions"]: flag.append(f"{res[st]['synth_decisions']} decisions used synthetic perp seconds")
         if res[st]["ffill_decisions"]: flag.append(f"{res[st]['ffill_decisions']} decisions used forward-filled spot seconds")
-        print(f"bias {st}: {len(R)} forecasts, mean {p.mean():.3f}, below 0.5 {down:.0%}; incomplete-bar counters on {len(syn)} records" + (f"  FLAGS: {'; '.join(flag)}" if flag else "  ok"))
+        print(f"bias {st}: {len(R)} forecasts, mean {p.mean():.3f}, below 0.5 {down:.0%}, mean |p-0.5| {spread:.3f} (max {mx:.3f}), >= 0.05 in {conf:.0%}" + (" (archive: 16-28% of windows, mean |p-0.5| 0.029-0.038)" if st == "A" else "") + f"; incomplete-bar counters on {len(syn)} records" + (f"  FLAGS: {'; '.join(flag)}" if flag else "  ok"))
         res[st]["flags"] = flag
     if not res: print("bias: fewer than 10 forecasts per strategy, nothing to judge")
     return res
