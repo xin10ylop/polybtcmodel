@@ -63,6 +63,10 @@ class LiveTimeline:
             self.a[k][:] = np.nan
         self.known = 0                      # seconds [0, known) are final
         self.last_spot_sec = None; self.last_perp_sec = None   # last bar actually received from each feed
+        self.last_perp_commit = None        # last second whose perp bar was committed from real trades
+        self.synth = np.zeros(self.cap, dtype=bool)   # perp bar synthesized from spot (no real trades when the second was finalized)
+        self.ffill = np.zeros(self.cap, dtype=bool)   # spot close forward-filled (no kline when the second was finalized)
+        self.basis_live = None              # rolling perp/spot basis from real live bars (used for synthesis instead of the archive constant)
         self.lock = threading.Lock()
         self.perp_pending = {}              # second -> partial perp bar
 
@@ -89,6 +93,8 @@ class LiveTimeline:
         for k in ("p_nb", "p_lbv", "p_lsv"):
             a[k][i] = bar.get(k, 0.0)
         a["p_qv"][i] = bar.get("pv", 0.0)
+        self.synth[i] = False
+        if self.last_perp_commit is None or sec > self.last_perp_commit: self.last_perp_commit = sec
 
     def set_eth(self, sec, c, v, bv):
         i = sec - self.t0_epoch
@@ -102,17 +108,22 @@ class LiveTimeline:
         a = self.a; lo, hi = self.known, j
         # forward-fill the close first (gaps from feed outages), then derive open/high/low from it
         for t in range(lo, hi):
-            if np.isnan(a["s_close"][t]) and t > 0: a["s_close"][t] = a["s_close"][t - 1]
+            if np.isnan(a["s_close"][t]) and t > 0: a["s_close"][t] = a["s_close"][t - 1]; self.ffill[t] = True
         for k in ("s_open", "s_high", "s_low"):
             for t in range(lo, hi):
                 if np.isnan(a[k][t]): a[k][t] = a["s_close"][t]
+        # perp basis for synthesis: the live rolling basis (median of real bars over the last hour) once there is one, else the archive's
+        if lo > 0:
+            w0 = max(lo - 3600, 0); m = ~self.synth[w0:lo] & np.isfinite(a["p_close"][w0:lo]) & np.isfinite(a["s_close"][w0:lo])
+            if m.sum() >= 300: self.basis_live = float(np.median(a["p_close"][w0:lo][m] / a["s_close"][w0:lo][m]))
+        basis = self.basis_live if self.basis_live is not None else self.basis
         for t in range(lo, hi):
             if np.isnan(a["p_close"][t]):
-                basis = self.basis
                 px = a["s_close"][t] * basis
                 a["p_open"][t] = a["p_high"][t] = a["p_low"][t] = a["p_close"][t] = a["p_vwap"][t] = px
                 a["p_buy"][t] = a["s_tb_base"][t]; a["p_sell"][t] = max(a["s_volume"][t] - a["s_tb_base"][t], 0); a["p_ntr"][t] = a["s_count"][t]
-                a["p_nb"][t] = a["s_count"][t] / 2; a["p_qv"][t] = px * a["s_volume"][t]
+                a["p_nb"][t] = a["s_count"][t] / 2; a["p_qv"][t] = px * a["s_volume"][t]; a["p_maxq"][t] = 0.0
+                self.synth[t] = True
             if np.isnan(a["e_c"][t]):
                 a["e_c"][t] = a["e_c"][t - 1] if t > 0 else np.nan
         self.known = j
@@ -514,12 +525,19 @@ class Trader:
             from live_executor import LiveExecutor
             self.exec = LiveExecutor(); log("LIVE execution enabled" + (" (DRY_RUN)" if os.environ.get("DRY_RUN", "1") == "1" else ""))
 
-    def lat(self, scheduled, feed=None):
-        """Feed freshness and timing at a decision: seconds since the last received spot bar / perp trade / Polymarket print, and how late the decision is."""
+    def lat(self, scheduled, feed=None, last_sec=None):
+        """Feed freshness and timing at a decision: seconds since the last received spot bar / perp trade / Polymarket print, how late
+        the decision is, and (last_sec = last second the forecast used) how many of the 60 seconds up to it had a synthetic perp bar
+        or a forward-filled spot close. Both must be 0 for a decision to be comparable with the archive replay."""
         now = time.time(); tl = self.tl
         d = dict(decision_delay=round(now - scheduled, 2),
                  spot_lag=round(now - (tl.last_spot_sec + 1), 2) if tl.last_spot_sec else None,
                  perp_lag=round(now - (tl.last_perp_sec + 1), 2) if tl.last_perp_sec else None)
+        if last_sec is not None:
+            i = last_sec - tl.t0_epoch
+            if 0 < i < tl.cap:
+                d["synth_last60"] = int(tl.synth[max(i - 59, 0):i + 1].sum()); d["ffill_last60"] = int(tl.ffill[max(i - 59, 0):i + 1].sum())
+                if d["synth_last60"] or d["ffill_last60"]: log(f"decision on incomplete bars: {d['synth_last60']} synthetic perp s, {d['ffill_last60']} forward-filled spot s in the last 60 s")
         if feed is not None:
             _, ts = feed.last_up(); d["pm_age"] = round(now - ts / 1000, 2) if ts else None
         if d["spot_lag"] is not None and d["spot_lag"] > 3: log(f"STALE spot feed at decision: last bar {d['spot_lag']:.1f}s old (forward-filled)")
@@ -532,13 +550,23 @@ class Trader:
             self.feeds[T] = PolyFeed(T, tk[0], tk[1]); self.conds[T] = tk[2]; log(f"subscribed window {dt.datetime.fromtimestamp(T, dt.UTC):%H:%M}")
         return self.feeds[T]
 
+    GAP = 3.0   # a feed older than this is treated as down: seconds are then finalized on the clock (spot forward-filled, perp synthetic) so the trader keeps running
+
     def finalize(self):
-        """Seconds are final ~1.5 s after they end (spot kline close); commit the timeline up to now-2."""
-        now = time.time(); sec = int(now) - 1
-        with self.tl.lock:
-            for s_ in [s for s in self.tl.perp_pending if s < sec - 1]:
-                bb = self.tl.perp_pending.pop(s_); bb["p_vwap"] = bb["pv"] / bb["vv"] if bb["vv"] > 0 else bb["p_close"]; self.tl.set_perp(s_, bb)
-        self.tl.finalize_to(sec)
+        """Commit perp bars for seconds whose trades are complete (older than int(now)-1), then finalize only the seconds that have
+        a real spot kline AND a committed perp bar. Finalizing on the clock alone (the previous rule) marked the last second final
+        before its bars had arrived, so every decision saw a forward-filled spot close and a perp synthesized from it: a spurious
+        perp-vs-spot move in the last second, which is exactly what the model's lead-lag features key on. A feed that is silent for
+        more than GAP seconds falls back to the clock rule (and the decision record counts those seconds)."""
+        now = time.time(); sec = int(now) - 1; tl = self.tl
+        with tl.lock:
+            for s_ in sorted(s for s in tl.perp_pending if s < sec):
+                bb = tl.perp_pending.pop(s_); bb["p_vwap"] = bb["pv"] / bb["vv"] if bb["vv"] > 0 else bb["p_close"]; tl.set_perp(s_, bb)
+            lim = sec
+            if tl.last_spot_sec is not None and now - (tl.last_spot_sec + 1) < self.GAP: lim = min(lim, tl.last_spot_sec + 1)
+            if tl.last_perp_commit is not None and now - (tl.last_perp_commit + 1) < self.GAP: lim = min(lim, tl.last_perp_commit + 1)
+            if tl.last_perp_commit is None and tl.last_perp_sec is not None: lim = min(lim, tl.last_perp_sec)   # feed up but nothing committed yet
+        tl.finalize_to(lim)
 
     def run(self):
         log("paper trader started"); last_T = None; t_start = time.time()
@@ -577,7 +605,7 @@ class Trader:
                     plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.01 < p < 0.99)
                     side = "UP" if p >= 0.5 else "DOWN"; ps_model = p if side == "UP" else 1 - p; ps_mkt = mkt if side == "UP" else 1 - mkt
                     action = "skip" if not plausible else (f"BID {side}" if np.isfinite(mkt) and ps_model >= CFG_D["q"] and ps_mkt <= CFG_D["maxpx"] else "none")
-                    self.ffc.write(json.dumps(dict(strategy="D", T=Td, ts=round(time.time(), 2), market=mkt, action=action, **self.lat(Td + CFG_D["decide"] + 1.6, feed), **fc)) + "\n"); self.ffc.flush()
+                    self.ffc.write(json.dumps(dict(strategy="D", T=Td, ts=round(time.time(), 2), market=mkt, action=action, **self.lat(Td + CFG_D["decide"] + 1.6, feed, Td + CFG_D["decide"] - 1), **fc)) + "\n"); self.ffc.flush()
                     log(f"[D] T={dt.datetime.fromtimestamp(Td, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} ({fc['compute_s']}s)")
                     if plausible and action.startswith("BID"):
                         self.pending.append(dict(strategy="D", T=Td, side=side, bid=ps_mkt, placed_ms=int(time.time() * 1000), until=time.time() + CFG_D["cancel"], p=p, mkt=mkt))
@@ -590,7 +618,7 @@ class Trader:
                     feed = self.feed_for(T); mkt, _ = feed.last_up() if feed else (np.nan, None)
                     plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)
                     action = "skip" if not plausible else ("BID " + ("UP" if p > mkt else "DOWN") if np.isfinite(mkt) and abs(p - mkt) >= CFG_C["delta"] else "none")
-                    self.ffc.write(json.dumps(dict(strategy="C", T=T, ts=round(time.time(), 2), market=mkt, action=action, **self.lat(T + CFG_C["decide"] + 1.4, feed), **fc)) + "\n"); self.ffc.flush()
+                    self.ffc.write(json.dumps(dict(strategy="C", T=T, ts=round(time.time(), 2), market=mkt, action=action, **self.lat(T + CFG_C["decide"] + 1.4, feed, T + CFG_C["decide"] - 1), **fc)) + "\n"); self.ffc.flush()
                     log(f"[C] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} ({fc['compute_s']}s)")
                     if plausible and action.startswith("BID"):
                         side = action[4:]; bid = mkt if side == "UP" else 1 - mkt
@@ -618,7 +646,7 @@ class Trader:
                     agree = bool(np.isfinite(z5) and np.sign(z5) == np.sign(p - 0.5))
                     plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)
                     action = "skip" if not plausible else ("BUY " + ("UP" if p > 0.5 else "DOWN") if abs(p - 0.5) >= CFG_A["thr"] and feed is not None and agree else "none")
-                    self.ffc.write(json.dumps(dict(strategy="A", T=T, ts=round(time.time(), 2), market=mkt, z_s5=z5, agree=agree, action=action, **self.lat(T - 43.5, feed), **fc)) + "\n"); self.ffc.flush()
+                    self.ffc.write(json.dumps(dict(strategy="A", T=T, ts=round(time.time(), 2), market=mkt, z_s5=z5, agree=agree, action=action, **self.lat(T - 43.5, feed, T - 46), **fc)) + "\n"); self.ffc.flush()
                     if not plausible:
                         log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} SKIP: implausible forecast (p0={fc.get('p0')}, p={p}) - data gap?"); continue
                     log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} p_close={p:.3f} bp_z5={z5:+.3f} agree={agree} market={mkt:.3f} ({fc['compute_s']}s)")
@@ -635,7 +663,7 @@ class Trader:
                     plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)
                     action = "skip" if not plausible else ("BID " + ("UP" if p > mkt else "DOWN") if np.isfinite(mkt) and abs(p - mkt) >= CFG_B["delta"] else "none")
                     mkt_preT = feed.last_up(before_ms=Tb * 1000)[0] if feed else np.nan
-                    self.ffc.write(json.dumps(dict(strategy="B", T=Tb, ts=round(time.time(), 2), market=mkt, market_preT=mkt_preT, action=action, **self.lat(Tb + 1.6, feed), **fc)) + "\n"); self.ffc.flush()
+                    self.ffc.write(json.dumps(dict(strategy="B", T=Tb, ts=round(time.time(), 2), market=mkt, market_preT=mkt_preT, action=action, **self.lat(Tb + 1.6, feed, Tb - 1), **fc)) + "\n"); self.ffc.flush()
                     log(f"[B] T={dt.datetime.fromtimestamp(Tb, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} p0={fc['p0']:.1f} now={fc['price_now']:.1f} ({fc['compute_s']}s)")
                     if not plausible:
                         log(f"[B] T={dt.datetime.fromtimestamp(Tb, dt.UTC):%H:%M} SKIP: implausible forecast (p0={fc.get('p0')}, p={p}) - data gap?"); continue

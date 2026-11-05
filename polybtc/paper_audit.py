@@ -42,6 +42,29 @@ def day_bounds(day):
     return t0, t0 + DAY
 
 
+# ------------------------------------------------------------------------------------ 0. bias / data integrity
+def bias(day, fcs):
+    """Day-level sanity of the live forecasts themselves (no archive needed): the frozen model is never one-sided for long in the
+    archive (over 903 stretches of 30 consecutive windows the share of A forecasts below 0.5 never left 0.13-0.87 and the mean
+    close head stayed within 0.465-0.559), and a decision must not have used synthetic perp or forward-filled spot seconds."""
+    t0, t1 = day_bounds(day); res = {}
+    for st, head in (("A", "close_p"), ("B", "close_p"), ("D", "close_p")):
+        R = [r for r in fcs if r["strategy"] == st and t0 <= r["T"] < t1 and np.isfinite(r.get(head, np.nan))]
+        if len(R) < 10: continue
+        p = np.array([r[head] for r in R]); down = float((p < 0.5).mean()); one = max(down, 1 - down)
+        syn = [r.get("synth_last60") for r in R if r.get("synth_last60") is not None]; ff = [r.get("ffill_last60") for r in R if r.get("ffill_last60") is not None]
+        res[st] = dict(n=len(R), mean=float(p.mean()), share_below_half=down, one_sided=one, synth_decisions=int(sum(1 for x in syn if x)), ffill_decisions=int(sum(1 for x in ff if x)), counted=len(syn))
+        flag = []
+        if one > 0.80: flag.append(f"ONE-SIDED ({one:.0%} of forecasts on one side; archive max over 30-window stretches 0.87, over a day 0.62)")
+        if st == "A" and not 0.46 <= p.mean() <= 0.56: flag.append(f"MEAN HEAD {p.mean():.3f} outside the archive range 0.465-0.559")
+        if res[st]["synth_decisions"]: flag.append(f"{res[st]['synth_decisions']} decisions used synthetic perp seconds")
+        if res[st]["ffill_decisions"]: flag.append(f"{res[st]['ffill_decisions']} decisions used forward-filled spot seconds")
+        print(f"bias {st}: {len(R)} forecasts, mean {p.mean():.3f}, below 0.5 {down:.0%}; incomplete-bar counters on {len(syn)} records" + (f"  FLAGS: {'; '.join(flag)}" if flag else "  ok"))
+        res[st]["flags"] = flag
+    if not res: print("bias: fewer than 10 forecasts per strategy, nothing to judge")
+    return res
+
+
 # ------------------------------------------------------------------------------------ 1. coverage
 def coverage(day, fcs):
     t0, t1 = day_bounds(day)
@@ -175,6 +198,10 @@ def parity(day, fcs, sample, force_rest=False):
     for k, thr in (("A", 0.05), ("B", 0.12)):
         if f"{k}_live" not in df: continue
         d = (df[f"{k}_replay"] - df[f"{k}_live"]).abs(); ok = d.notna()
+        sg = (df[f"{k}_live"] - df[f"{k}_replay"])[ok]
+        if len(sg):
+            res[f"{k}_signed_mean"] = float(sg.mean()); res[f"{k}_share_live_above"] = float((sg > 0).mean())
+            print(f"parity {k} signed (live - archive): mean {sg.mean():+.4f}, live above the archive in {(sg > 0).mean():.0%} of windows" + ("  FLAG: systematic shift" if abs(sg.mean()) > 0.01 and (abs((sg > 0).mean() - 0.5) > 0.2) else ""))
         res[f"{k}_mean_abs_dp"] = float(d[ok].mean()); res[f"{k}_max_abs_dp"] = float(d[ok].max()); res[f"{k}_n"] = int(ok.sum())
         if k == "A":
             flips = ((np.sign(df.A_live - 0.5) != np.sign(df.A_replay - 0.5)) & ok).sum()
@@ -319,7 +346,7 @@ if __name__ == "__main__":
     a = ap.parse_args(); day = dt.date.fromisoformat(a.day)
     fcs, trades, orders = load_jsonl("forecasts.jsonl"), load_jsonl("paper_trades.jsonl"), load_jsonl("orders.jsonl")
     print(f"== paper audit {day}  (PAPER_DIR={PAPER})")
-    out = {"day": a.day, "coverage": coverage(day, fcs), "rules": rules(day, fcs, trades, orders), "latency": latency(day, fcs, orders)}
+    out = {"day": a.day, "bias": bias(day, fcs), "coverage": coverage(day, fcs), "rules": rules(day, fcs, trades, orders), "latency": latency(day, fcs, orders)}
     if not a.no_exits: out["exits"] = exits(day, trades, orders)
     if not a.no_replay: out["parity"] = parity(day, fcs, a.sample, a.force_rest)
     json.dump(out, open(os.path.join(PAPER, f"audit_{a.day}.json"), "w"), indent=1, default=str)
