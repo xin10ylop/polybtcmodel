@@ -7,3 +7,4 @@
 {"event": "placed", "order_id": "dry-1793875201989", "strategy": "B", "T": 1793875200, "side": "DOWN", "price": 0.53, "size": 18.86, "kind": "buy", "status": "live", "ts": 1793875201.99}
 {"event": "cancelled", "order_id": "dry-1793875201989", "filled": 0.0, "ts": 1793875212.01}
 {"event": "placed", "order_id": "dry-1793875501938", "strategy": "B", "T": 1793875500, "side": "DOWN", "price": 0.5, "size": 20.0, "kind": "buy", "status": "live", "ts": 1793875501.94}
+{"event": "cancelled", "order_id": "dry-1793875501938", "filled": 0.0, "ts": 1793875512.37}
