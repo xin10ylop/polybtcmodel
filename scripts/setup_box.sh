@@ -7,6 +7,9 @@ BR=claude/polymarket-btc-trading-system-ewbqwd
 echo "== feed reachability (US IPs are blocked by Binance's main API; the mirrors below must answer)"
 curl -sS -m 10 "https://data-api.binance.vision/api/v3/klines?symbol=BTCUSDT&interval=1s&limit=1" | head -c 80; echo
 curl -sS -m 10 "https://www.okx.com/api/v5/market/trades?instId=BTC-USDT-SWAP&limit=1" | head -c 80; echo
+echo "== Binance perp (the archive's own feed; HTTP 451 = restricted location, then keep PERP_FEED=okx):"
+curl -sS -m 10 -o /dev/null -w "fapi.binance.com -> HTTP %{http_code}\n" "https://fapi.binance.com/fapi/v1/aggTrades?symbol=BTCUSDT&limit=1" || true
+curl -sS -m 10 -o /dev/null -w "clob.polymarket.com -> HTTP %{http_code}\n" "https://clob.polymarket.com/markets?limit=1" || true
 sudo mkdir -p /home/user && sudo chown "$USER" /home/user
 cd /home/user
 for r in btc-predict btc-movement btcmovement2; do [ -d $r ] || git clone $GH/$r.git; done        # model repos: default branch
