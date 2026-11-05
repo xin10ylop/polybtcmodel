@@ -343,9 +343,13 @@ if __name__ == "__main__":
     ap.add_argument("--day", default=(dt.datetime.now(dt.UTC).date() - dt.timedelta(days=1)).isoformat())
     ap.add_argument("--sample", type=int, default=4, help="replay every n-th window in the parity check")
     ap.add_argument("--no-replay", action="store_true"); ap.add_argument("--no-exits", action="store_true"); ap.add_argument("--force-rest", action="store_true")
+    ap.add_argument("--since", default=None, help="HH:MM UTC: only records from that time of the day on (e.g. after a restart on fixed code)")
     a = ap.parse_args(); day = dt.date.fromisoformat(a.day)
     fcs, trades, orders = load_jsonl("forecasts.jsonl"), load_jsonl("paper_trades.jsonl"), load_jsonl("orders.jsonl")
-    print(f"== paper audit {day}  (PAPER_DIR={PAPER})")
+    if a.since:
+        hh, mm = a.since.split(":"); t_since = day_bounds(day)[0] + int(hh) * 3600 + int(mm) * 60
+        fcs = [r for r in fcs if r.get("ts", r["T"]) >= t_since]; trades = [r for r in trades if r["T"] >= t_since - 300]; orders = [r for r in orders if r["T"] >= t_since - 300]
+    print(f"== paper audit {day}  (PAPER_DIR={PAPER})" + (f"  records from {a.since} UTC on" if a.since else ""))
     out = {"day": a.day, "bias": bias(day, fcs), "coverage": coverage(day, fcs), "rules": rules(day, fcs, trades, orders), "latency": latency(day, fcs, orders)}
     if not a.no_exits: out["exits"] = exits(day, trades, orders)
     if not a.no_replay: out["parity"] = parity(day, fcs, a.sample, a.force_rest)

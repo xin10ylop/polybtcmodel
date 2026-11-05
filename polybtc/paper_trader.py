@@ -550,7 +550,7 @@ class Trader:
             self.feeds[T] = PolyFeed(T, tk[0], tk[1]); self.conds[T] = tk[2]; log(f"subscribed window {dt.datetime.fromtimestamp(T, dt.UTC):%H:%M}")
         return self.feeds[T]
 
-    GAP = 3.0   # a feed older than this is treated as down: seconds are then finalized on the clock (spot forward-filled, perp synthetic) so the trader keeps running
+    GAP = 5.0   # a feed older than this is treated as down: seconds are then finalized on the clock (spot forward-filled, perp synthetic) so the trader keeps running
 
     def finalize(self):
         """Commit perp bars for seconds whose trades are complete (older than int(now)-1), then finalize only the seconds that have
