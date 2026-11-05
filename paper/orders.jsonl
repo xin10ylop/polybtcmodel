@@ -24,3 +24,9 @@
 {"strategy": "B", "T": 1793871300, "side": "DOWN", "bid": 0.30000000000000004, "event": "filled", "fill_time": 2.508}
 {"strategy": "B", "T": 1793871900, "side": "DOWN", "bid": 0.52, "placed": 1793871901.98, "placed_delay": 1.98, "event": "placed"}
 {"strategy": "B", "T": 1793871900, "side": "DOWN", "bid": 0.52, "event": "filled", "fill_time": 2.011}
+{"strategy": "B", "T": 1793874000, "side": "DOWN", "bid": 0.5700000000000001, "placed": 1793874002.01, "placed_delay": 2.01, "event": "placed"}
+{"strategy": "B", "T": 1793874000, "side": "DOWN", "bid": 0.5700000000000001, "event": "filled", "fill_time": 2.593}
+{"strategy": "B", "T": 1793874600, "side": "DOWN", "bid": 0.58, "placed": 1793874602.0, "placed_delay": 2.0, "event": "placed"}
+{"strategy": "B", "T": 1793874600, "side": "DOWN", "bid": 0.58, "event": "filled", "fill_time": 2.242}
+{"strategy": "B", "T": 1793875200, "side": "DOWN", "bid": 0.53, "placed": 1793875201.99, "placed_delay": 1.99, "event": "placed"}
+{"strategy": "B", "T": 1793875200, "side": "DOWN", "bid": 0.53, "event": "filled", "fill_time": 2.665}
