@@ -22,3 +22,5 @@
 {"strategy": "B", "T": 1793870100, "side": "DOWN", "bid": 0.4, "event": "filled", "fill_time": 1.939}
 {"strategy": "B", "T": 1793871300, "side": "DOWN", "bid": 0.30000000000000004, "placed": 1793871302.14, "placed_delay": 2.14, "event": "placed"}
 {"strategy": "B", "T": 1793871300, "side": "DOWN", "bid": 0.30000000000000004, "event": "filled", "fill_time": 2.508}
+{"strategy": "B", "T": 1793871900, "side": "DOWN", "bid": 0.52, "placed": 1793871901.98, "placed_delay": 1.98, "event": "placed"}
+{"strategy": "B", "T": 1793871900, "side": "DOWN", "bid": 0.52, "event": "filled", "fill_time": 2.011}
