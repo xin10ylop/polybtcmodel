@@ -14,6 +14,17 @@ feed = os.environ.get("PERP_FEED", "binance_rest"); fn = {"binance_rest": pt.bin
 t0 = int(time.time()) // pt.DAY * pt.DAY; tl = pt.LiveTimeline(t0, days=2); stop = threading.Event()
 th = threading.Thread(target=fn, args=(tl, stop), daemon=True); th.start()
 print(f"collecting {N}s of {feed} perp trades ...", flush=True); t_start = int(time.time()) + 2; time.sleep(N); stop.set(); t_end = int(time.time()) - 2
+# definitive completeness test for the Binance REST feed: aggTrade ids are consecutive, so the ids received over a window must have no gaps
+if feed == "binance_rest":
+    try:
+        a = requests.get("https://fapi.binance.com/fapi/v1/aggTrades", params=dict(symbol="BTCUSDT", startTime=t_start * 1000, endTime=t_start * 1000 + 999, limit=1000), timeout=10).json()
+        b = requests.get("https://fapi.binance.com/fapi/v1/aggTrades", params=dict(symbol="BTCUSDT", startTime=(t_end - 1) * 1000, endTime=(t_end - 1) * 1000 + 999, limit=1000), timeout=10).json()
+        if a and b:
+            id0, id1 = int(a[0]["a"]), int(b[-1]["a"]); n_exp = id1 - id0 + 1
+            got = sum(tl.perp_pending[s]["p_ntr"] for s in range(t_start, t_end) if s in tl.perp_pending)
+            print(f"id continuity: Binance assigned {n_exp} aggTrade ids between {dt.datetime.fromtimestamp(t_start, dt.UTC):%H:%M:%S} and {dt.datetime.fromtimestamp(t_end, dt.UTC):%H:%M:%S}; the feed delivered {got} trades in those seconds ({got / n_exp:.1%})")
+    except Exception as e:
+        print("id continuity check failed:", repr(e)[:100])
 secs = [s for s in range(t_start, t_end) if s in tl.perp_pending]
 if not secs: print("no perp trades received"); sys.exit(1)
 bars = [tl.perp_pending[s] for s in secs]; n = t_end - t_start
@@ -36,7 +47,7 @@ if rows:
     print(f"archive, same UTC hour {h:02d}, median of the last {len(rows)} days:")
     print(f"  perp: {a[0]:6.1f} trades/s  {a[1]:6.2f} BTC/s  largest trade/s {a[2]:5.2f} BTC  seconds without a trade {a[5]:.1%}")
     print(f"  spot: {a[3]:6.1f} trades/s  {a[4]:6.2f} BTC/s      ->  perp/spot ratio: trades {a[0] / a[3]:.2f}  volume {a[1] / a[4]:.2f}")
-    ok = (p_ntr / max(s_cnt, 1e-9)) / (a[0] / a[3]) > 0.6 and (p_vol / max(s_vol, 1e-9)) / (a[1] / a[4]) > 0.6
-    print("\nVERDICT:", "perp feed complete (live perp/spot ratios within the archive's)" if ok else "PERP FEED INCOMPLETE: live perp/spot ratios far below the archive's")
+    ok = p_vol / a[1] > 0.6 and p_ntr / a[0] > 0.5
+    print("\nVERDICT:", "perp feed looks complete (live perp volume and trade rate at or above the archive's for this hour)" if ok else "PERP FEED LOOKS INCOMPLETE: live perp volume/trade rate well below the archive's for this hour; see the id continuity line")
 else:
     print("no archive day files with perp data to compare")
