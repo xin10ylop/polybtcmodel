@@ -13,6 +13,12 @@ Run:  python polybtc/paper_trader.py            (foreground; use nohup)
 """
 import os, sys, json, time, threading, datetime as dt, traceback
 import numpy as np, pandas as pd, requests, websocket
+import socket as _socket
+if os.environ.get("FORCE_IPV4", "1") == "1":                 # data-centre hosts often have a broken IPv6 route: prefer IPv4 everywhere
+    _gai = _socket.getaddrinfo
+    def _gai4(*a, **k):
+        r = _gai(*a, **k); v4 = [x for x in r if x[0] == _socket.AF_INET]; return v4 or r
+    _socket.getaddrinfo = _gai4
 HERE = os.path.dirname(os.path.abspath(__file__)); REPO = os.path.join(HERE, "..")
 sys.path.insert(0, os.path.join(REPO, "scripts")); sys.path.insert(0, HERE)
 os.environ.setdefault("BTC_DATA_DIR", "/home/user/data")
@@ -267,7 +273,8 @@ def binance_perp_ws(tl, stop):
     CT = 1.0
     while not stop.is_set():
         try:
-            ws = websocket.create_connection("wss://fstream.binance.com/ws/btcusdt@aggTrade", timeout=30)
+            ws = websocket.create_connection("wss://fstream.binance.com/ws/btcusdt@aggTrade", timeout=15)
+            log("binance perp ws connected")
             while not stop.is_set():
                 d = json.loads(ws.recv())
                 if d.get("e") != "aggTrade": continue
