@@ -176,6 +176,18 @@ reports/          summary.json, B_exit_grid.csv, trades_*.csv
 
 ## 6. Going live — what still has to be verified
 
+**Execution layer (`polybtc/live_executor.py`, 2026-11-05).** With `LIVE=1` the paper trader hands every A / B / D decision
+to an executor built on Polymarket's official Python SDK (`polymarket-client`): A rests a BUY at 0.50 at T−45 and cancels it
+at T−40 if unfilled; B and D rest a BUY at the last print and cancel after 10 s; a fill gets a post-only SELL at 0.85 (A, B);
+anything unsold at the close settles and is redeemed through the Relayer (gasless, needs a Relayer API key from
+polymarket.com → Settings → API Keys). Sizing `STAKE_USD` per trade (min 5 shares), `MAX_OPEN` positions, `DAILY_LOSS_LIMIT`
+(no new trades for the UTC day below it), kill file `PAPER_DIR/STOP` (cancels open buys, blocks new ones). `DRY_RUN=1`
+(default) logs every order without touching the account: run a day of dry-run on the box before `DRY_RUN=0`.
+Env for real orders: `POLYMARKET_PRIVATE_KEY` (signer), `POLYMARKET_WALLET_ADDRESS` (account wallet from the profile menu),
+`POLYMARKET_RELAYER_API_KEY`, `POLYMARKET_RELAYER_API_KEY_ADDRESS`. Collateral is pUSD (deposits via the site auto-wrap).
+Records: `live_orders.jsonl`, `live_trades.jsonl`, `live.log` next to the paper logs.
+
+
 **Live perp feed (found 2026-11-05, open).** The models' perp features are venue-scaled (Binance USDT-M). The trader feeds
 OKX trades; the parity audit shows the live forecasts differ from the archive replay by 0.03 on average with direction flips
 on a third of A windows, and the live-path rescoring shows the perp features carry about a third of B's edge and two thirds of

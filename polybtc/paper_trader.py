@@ -508,6 +508,11 @@ class Trader:
         self.model = Model(self.tl); self.feeds = {}; self.pending = []; self.positions = []; self.done = set()
         self.ftrade = open(os.path.join(PAPER, "paper_trades.jsonl"), "a"); self.ffc = open(os.path.join(PAPER, "forecasts.jsonl"), "a")
         self.forder = open(os.path.join(PAPER, "orders.jsonl"), "a")
+        self.conds = {}
+        self.exec = None
+        if os.environ.get("LIVE") == "1":
+            from live_executor import LiveExecutor
+            self.exec = LiveExecutor(); log("LIVE execution enabled" + (" (DRY_RUN)" if os.environ.get("DRY_RUN", "1") == "1" else ""))
 
     def lat(self, scheduled, feed=None):
         """Feed freshness and timing at a decision: seconds since the last received spot bar / perp trade / Polymarket print, and how late the decision is."""
@@ -524,7 +529,7 @@ class Trader:
         if T not in self.feeds:
             tk = get_tokens(T)
             if tk is None: return None
-            self.feeds[T] = PolyFeed(T, tk[0], tk[1]); log(f"subscribed window {dt.datetime.fromtimestamp(T, dt.UTC):%H:%M}")
+            self.feeds[T] = PolyFeed(T, tk[0], tk[1]); self.conds[T] = tk[2]; log(f"subscribed window {dt.datetime.fromtimestamp(T, dt.UTC):%H:%M}")
         return self.feeds[T]
 
     def finalize(self):
@@ -578,6 +583,7 @@ class Trader:
                         self.pending.append(dict(strategy="D", T=Td, side=side, bid=ps_mkt, placed_ms=int(time.time() * 1000), until=time.time() + CFG_D["cancel"], p=p, mkt=mkt))
                         self.forder.write(json.dumps(dict(strategy="D", T=Td, side=side, bid=ps_mkt, placed=round(time.time(), 2), placed_delay=round(time.time() - Td, 2), event="placed")) + "\n"); self.forder.flush()
                         log(f"[D] REST BID {side} @{ps_mkt:.3f} for {CFG_D['cancel']}s (model {ps_model:.3f})")
+                        if self.exec: self.exec.buy("D", Td, side, round(ps_mkt, 2), time.time() + CFG_D["cancel"], feed.up, feed.down, self.conds.get(Td), None)
                 # ---- strategy C decision at T-5 (bars through T-6 final at ~T-4.5): disagreement with the last print, bid until the open
                 if "C" in ENABLED and T + CFG_C["decide"] + 1.4 <= now < T and ("C", T) not in self.done and self.tl.known >= (T + CFG_C["decide"]) - self.tl.t0_epoch:
                     self.done.add(("C", T)); fc = self.model.forecast(T, -LAG, LAG + CFG_C["decide"]); p = fc.get("close_p", np.nan)
@@ -619,6 +625,7 @@ class Trader:
                     if action.startswith("BUY"):
                         side = action[4:]
                         self.positions.append(Position("A", T, side, CFG_A["entry"], int((T - 45) * 1000), CFG_A, p, mkt)); log(f"[A] BUY {side} @0.50 (assumed pre-open fill)")
+                        if self.exec: self.exec.buy("A", T, side, CFG_A["entry"], T - 40, feed.up, feed.down, self.conds.get(T), CFG_A["tp"])
                         self.positions.append(Position("A0", T, side, CFG_A0["entry"], int((T - 45) * 1000), CFG_A0, p, mkt))   # shadow with the previous exits
                 # ---- strategy B decision at T (bars through T-1 final at ~T+1.5)
                 if T - 300 + 1.6 <= now < T - 300 + 10 and ("B", T - 300) not in self.done and self.tl.known >= (T - 300) - self.tl.t0_epoch:   # skip stale windows after a restart
@@ -637,6 +644,8 @@ class Trader:
                         self.pending.append(dict(strategy="B", T=Tb, side=side, bid=bid, placed_ms=int(time.time() * 1000), until=time.time() + CFG_B["cancel"], p=p, mkt=mkt))
                         self.forder.write(json.dumps(dict(strategy="B", T=Tb, side=side, bid=bid, placed=round(time.time(), 2), placed_delay=round(time.time() - Tb, 2), event="placed")) + "\n"); self.forder.flush()
                         log(f"[B] REST BID {side} @{bid:.3f} for {CFG_B['cancel']}s")
+                        if self.exec: self.exec.buy("B", Tb, side, round(bid, 2), time.time() + CFG_B["cancel"], feed.up, feed.down, self.conds.get(Tb), CFG_B["tp"])
+                if self.exec: self.exec.poll(now, get_outcome)
                 # ---- pending maker orders
                 for o in list(self.pending):
                     feed = self.feeds.get(o["T"]); filled = None

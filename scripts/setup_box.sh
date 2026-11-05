@@ -21,7 +21,7 @@ $SUDO apt-get install -y -qq git curl python3-venv python3-full libgomp1 > /dev/
 [ -d /home/user/venv ] || python3 -m venv /home/user/venv
 PY=/home/user/venv/bin/python3
 $PY -m pip install -q --upgrade pip
-$PY -m pip install -q -r polybtcmodel/requirements.txt websocket-client
+$PY -m pip install -q -r polybtcmodel/requirements.txt websocket-client polymarket-client   # polymarket-client: official SDK, used only when LIVE=1
 echo "== 10 days of Binance archive history (spot, ETH, perp) in every format the models need"
 START=$(date -u -d "11 days ago" +%F); END=$(date -u -d "yesterday" +%F)
 $PY polybtcmodel/scripts/fetch_binance.py $START $END 4
@@ -31,6 +31,8 @@ export PAPER_DIR=/home/user/paper; mkdir -p $PAPER_DIR
 cd /home/user/polybtcmodel
 for pid in $(ps -eo pid,cmd | awk '/[p]aper_trader.py/ {print $1}'); do kill $pid; done; sleep 2    # one trader only
 export PERP_FEED=${PERP_FEED:-okx}     # PERP_FEED=binance (stream) or binance_rest (polling) on a non-US host; okx otherwise
+export LIVE=${LIVE:-0} DRY_RUN=${DRY_RUN:-1} STAKE_USD=${STAKE_USD:-10} MAX_OPEN=${MAX_OPEN:-3} DAILY_LOSS_LIMIT=${DAILY_LOSS_LIMIT:--100}   # LIVE=1 DRY_RUN=0 + POLYMARKET_* keys = real orders
+echo "   perp feed $PERP_FEED | live $LIVE (dry_run $DRY_RUN, stake \$$STAKE_USD)"
 nohup bash -c 'while true; do /home/user/venv/bin/python3 -W ignore polybtc/paper_trader.py >> $PAPER_DIR/stdout.log 2>&1; echo "trader exited $(date -u)" >> $PAPER_DIR/stdout.log; sleep 5; done' > /dev/null 2>&1 &
 sleep 5; tail -3 $PAPER_DIR/paper.log 2>/dev/null || true
 echo "running.  log:   tail -f /home/user/paper/paper.log"
