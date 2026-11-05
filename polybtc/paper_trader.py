@@ -702,6 +702,13 @@ def summary():
         g1 = t[(t.strategy == base) & t["T"].isin(g0["T"])]
         print(f"   shadow {sh} (old exits on the same {len(g0)} entries): {g0.pnl.sum():+.3f} per share, win {np.mean(g0.pnl > 0):.0%}  vs  {base} on those windows: {g1.pnl.sum():+.3f}, win {np.mean(g1.pnl > 0):.0%}")
     print(live.tail(15)[["strategy", "T", "side", "p_model", "market", "entry", "fill_time", "exit_kind", "exit_time", "exit", "pnl", "resolved_up"]].round(3).to_string(index=False))
+    lt = os.path.join(PAPER, "live_trades.jsonl")
+    if os.path.exists(lt):                                   # real-money (or dry-run) executor record
+        rows = [json.loads(l) for l in open(lt) if l.strip()]
+        if rows:
+            r = pd.DataFrame(rows); closes = r[r.event.isin(["settle"]) | ((r.event == "fill") & (r.get("kind") == "sell"))] if "kind" in r else r[r.event == "settle"]
+            buys = r[(r.event == "fill") & (r.get("kind", "") == "buy")] if "kind" in r else r.iloc[0:0]
+            print(f"\n== LIVE executor: {len(buys)} fills, {len(closes)} closes, realised pnl ${r.pnl.sum() if 'pnl' in r else 0:+.2f}" + (f", by strategy {r[r.pnl.notna()].groupby('strategy').pnl.sum().round(2).to_dict()}" if "pnl" in r else ""))
 
 
 if __name__ == "__main__":
