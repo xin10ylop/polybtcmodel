@@ -2,6 +2,8 @@
 # One-shot setup of the paper trader on a fresh Ubuntu box (run as a user with sudo).
 # The research scripts hard-code /home/user/... paths, so the repos are placed there.
 set -e
+SUDO=$(command -v sudo || true); [ "$(id -u)" = 0 ] && SUDO=""        # works as a sudo user or as root
+ME=$(id -un)
 GH=${GH:-https://github.com/xin10ylop}      # use git@github.com:xin10ylop if you clone over SSH
 BR=claude/polymarket-btc-trading-system-ewbqwd
 echo "== feed reachability (US IPs are blocked by Binance's main API; the mirrors below must answer)"
@@ -10,12 +12,12 @@ curl -sS -m 10 "https://www.okx.com/api/v5/market/trades?instId=BTC-USDT-SWAP&li
 echo "== Binance perp (the archive's own feed; HTTP 451 = restricted location, then keep PERP_FEED=okx):"
 curl -sS -m 10 -o /dev/null -w "fapi.binance.com -> HTTP %{http_code}\n" "https://fapi.binance.com/fapi/v1/aggTrades?symbol=BTCUSDT&limit=1" || true
 curl -sS -m 10 -o /dev/null -w "clob.polymarket.com -> HTTP %{http_code}\n" "https://clob.polymarket.com/markets?limit=1" || true
-sudo mkdir -p /home/user && sudo chown "$USER" /home/user
+$SUDO mkdir -p /home/user && $SUDO chown "$ME" /home/user
 cd /home/user
 for r in btc-predict btc-movement btcmovement2; do [ -d $r ] || git clone $GH/$r.git; done        # model repos: default branch
 [ -d polybtcmodel ] || git clone -b $BR $GH/polybtcmodel.git
 git -C polybtcmodel pull -q                                         # this copy is the one that runs
-sudo apt-get install -y -qq python3-venv python3-full > /dev/null
+$SUDO apt-get install -y -qq git curl python3-venv python3-full > /dev/null
 [ -d /home/user/venv ] || python3 -m venv /home/user/venv
 PY=/home/user/venv/bin/python3
 $PY -m pip install -q --upgrade pip
