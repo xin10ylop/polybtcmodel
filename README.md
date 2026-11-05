@@ -237,9 +237,18 @@ prints P&L with resolutions. Strategy A is simulated with the user's execution a
 before T−40); strategy B's buy limit counts as filled when a print at or below the bid occurs within 10 s (queue position ignored). Both are reported with equal weight.
 
 Running it on your own box: `scripts/setup_box.sh` (clones the four repos under `/home/user`, installs, pulls
-10 days of Binance archive history, starts the trader in an auto-restart loop). Check first that
-`data-api.binance.vision` and `www.okx.com` answer from the box's IP. Daily, re-run `scripts/fetch_binance.py`
-for the previous day and rebuild the timeline so the regime features keep a full history.
+10 days of Binance archive history, starts the trader in an auto-restart loop; works as root or as a sudo user).
+Its first lines print the reachability of the Binance spot mirror, OKX, Binance's futures REST and Polymarket's CLOB.
+Daily, re-run the script: it tops up the archive, rebuilds the timeline and restarts the trader.
+
+**Perp feed (`PERP_FEED`), found 2026-11-05.** The models' perp features need Binance's own USDT-M perp trades:
+* `binance` — the aggTrade websocket (`fstream.binance.com`): archive-identical. Not reachable from US hosts (HTTP 451)
+  and silently empty from Germany (the handshake and subscription succeed, no data; Binance's spot streams work there).
+* `binance_rest` — the same trades by REST polling (`/fapi/v1/aggTrades`, `fromId` pages, ~0.6 s cadence, ~2,000 of the
+  2,400 weight/min): same venue, sizes and flow, ~0.3–0.9 s staleness on the newest second. **Used on the Frankfurt box.**
+* `okx` — OKX swap trades by REST polling: reachable from the US, but OKX's price lags Binance by ~1 s and its flow is
+  only loosely related (see §7's feed diagnostic): a third of A's decisions flip direction. Fallback only.
+`scripts/ws_probe.py` tests the stream variants and the polling freshness from a new host in two minutes.
 
 **Auditing the paper trader** (`polybtc/paper_audit.py`, run daily for the previous UTC day after the data refresh):
 `PAPER_DIR=/home/user/paper python3 polybtc/paper_audit.py --day YYYY-MM-DD`. It checks four things and writes
