@@ -34,12 +34,15 @@ DAY = 86400
 CFG_B = dict(delta=0.12, cancel=10, tp=0.85, sl=None, tstop=None, settle=True, slip=0.01, fee=0.07)   # adopted 2026-11-04: sell 0.85 else settle (research/ideas10.py)
 CFG_B0 = dict(delta=0.12, cancel=10, tp=0.80, sl=0.10, tstop=240, slip=0.01, fee=0.07)               # previous exits, shadow
 CFG_D = dict(decide=90, q=0.90, maxpx=0.90, cancel=10, tp=None, sl=None, tstop=None, settle=True, slip=0.01, fee=0.07)   # high-confidence settlement capture (research/ideas10.py idea 6)
+CFG_E = dict(decide=260, q=0.80, maxpx=0.90, cancel=10, tp=None, sl=None, tstop=None, settle=True, slip=0.01, fee=0.07)  # last-minute capture (research/last_minute.py): PAPER ONLY until validated live
+CAPTURE = {"D": CFG_D, "E": CFG_E}   # strategies that bid at the last print at T+decide and hold to settlement
+LIVE_STRATEGIES = {"A", "B", "D"}    # the executor places real orders only for these
 CFG_A = dict(thr=0.05, entry=0.50, tp=0.85, sl=None, tstop=None, settle=True, slip=0.01, fee=0.07)   # adopted 2026-11-04: TP 0.85, no stop, hold to settlement (research/settle_exit_A.py)
 CFG_A0 = dict(thr=0.05, entry=0.50, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=0.07)               # the previous frozen exits, kept as a shadow
 CFG_C = dict(delta=0.08, decide=-5, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=0.07)   # "B five seconds early": bid at the last print from T-5 until the open
 LAG = 30
-CFGS = {"A": CFG_A, "A0": CFG_A0, "B": CFG_B, "B0": CFG_B0, "C": CFG_C, "D": CFG_D}
-ENABLED = {"A", "B", "D"}          # C switched off 2026-11-05 at the user's request (code kept; add "C" here to run it again)
+CFGS = {"A": CFG_A, "A0": CFG_A0, "B": CFG_B, "B0": CFG_B0, "C": CFG_C, "D": CFG_D, "E": CFG_E}
+ENABLED = {"A", "B", "D", "E"}     # C switched off 2026-11-05 at the user's request; E added 2026-11-06 as a paper-only candidate
 
 
 def log(*a):
@@ -611,84 +614,27 @@ class Trader:
                     self.model.regime(T, -LAG, LAG); self.done.add(("B_reg", T))
                 if "C" in ENABLED and now >= T - 25 and (T, -LAG, LAG + CFG_C["decide"]) not in self.model.regime_cache and ("C_reg", T) not in self.done:
                     self.model.regime(T, -LAG, LAG + CFG_C["decide"]); self.done.add(("C_reg", T))
-                if now >= T - 300 + CFG_D["decide"] - 30 and (T - 300, -LAG, LAG + CFG_D["decide"]) not in self.model.regime_cache and ("D_reg", T - 300) not in self.done:
-                    self.model.regime(T - 300, -LAG, LAG + CFG_D["decide"]); self.done.add(("D_reg", T - 300))
-                # ---- strategy D decision at T+90 of the running window: model >= q for a side that still trades <= maxpx -> bid at the last print, hold to settlement
+                for cst, ccfg in CAPTURE.items():
+                    if cst not in ENABLED: continue
+                    if now >= T - 300 + ccfg["decide"] - 30 and (T - 300, -LAG, LAG + ccfg["decide"]) not in self.model.regime_cache and (cst + "_reg", T - 300) not in self.done:
+                        self.model.regime(T - 300, -LAG, LAG + ccfg["decide"]); self.done.add((cst + "_reg", T - 300))
+                # ---- capture strategies (D at T+90, E at T+260): model >= q for a side that still trades <= maxpx -> bid at the last print, hold to settlement
                 Td = T - 300
-                if Td + CFG_D["decide"] + 1.6 <= now < Td + CFG_D["decide"] + 10 and ("D", Td) not in self.done and self.tl.known >= (Td + CFG_D["decide"]) - self.tl.t0_epoch:
-                    self.done.add(("D", Td)); fc = self.model.forecast(Td, -LAG, LAG + CFG_D["decide"]); p = fc.get("close_p", np.nan)
-                    feed = self.feed_for(Td); mkt, _ = feed.last_up() if feed else (np.nan, None)
-                    plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.01 < p < 0.99)
-                    side = "UP" if p >= 0.5 else "DOWN"; ps_model = p if side == "UP" else 1 - p; ps_mkt = mkt if side == "UP" else 1 - mkt
-                    action = "skip" if not plausible else (f"BID {side}" if np.isfinite(mkt) and ps_model >= CFG_D["q"] and ps_mkt <= CFG_D["maxpx"] else "none")
-                    self.ffc.write(json.dumps(dict(strategy="D", T=Td, ts=round(time.time(), 2), market=mkt, action=action, **self.lat(Td + CFG_D["decide"] + 1.6, feed, Td + CFG_D["decide"] - 1), **fc)) + "\n"); self.ffc.flush()
-                    log(f"[D] T={dt.datetime.fromtimestamp(Td, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} ({fc['compute_s']}s)")
-                    if plausible and action.startswith("BID"):
-                        self.pending.append(dict(strategy="D", T=Td, side=side, bid=ps_mkt, placed_ms=int(time.time() * 1000), until=time.time() + CFG_D["cancel"], p=p, mkt=mkt))
-                        self.forder.write(json.dumps(dict(strategy="D", T=Td, side=side, bid=ps_mkt, placed=round(time.time(), 2), placed_delay=round(time.time() - Td, 2), event="placed")) + "\n"); self.forder.flush()
-                        log(f"[D] REST BID {side} @{ps_mkt:.3f} for {CFG_D['cancel']}s (model {ps_model:.3f})")
-                        if self.exec: self.exec.buy("D", Td, side, round(ps_mkt, 2), time.time() + CFG_D["cancel"], feed.up, feed.down, self.conds.get(Td), None)
-                # ---- strategy C decision at T-5 (bars through T-6 final at ~T-4.5): disagreement with the last print, bid until the open
-                if "C" in ENABLED and T + CFG_C["decide"] + 1.4 <= now < T and ("C", T) not in self.done and self.tl.known >= (T + CFG_C["decide"]) - self.tl.t0_epoch:
-                    self.done.add(("C", T)); fc = self.model.forecast(T, -LAG, LAG + CFG_C["decide"]); p = fc.get("close_p", np.nan)
-                    feed = self.feed_for(T); mkt, _ = feed.last_up() if feed else (np.nan, None)
-                    plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)
-                    action = "skip" if not plausible else ("BID " + ("UP" if p > mkt else "DOWN") if np.isfinite(mkt) and abs(p - mkt) >= CFG_C["delta"] else "none")
-                    self.ffc.write(json.dumps(dict(strategy="C", T=T, ts=round(time.time(), 2), market=mkt, action=action, **self.lat(T + CFG_C["decide"] + 1.4, feed, T + CFG_C["decide"] - 1), **fc)) + "\n"); self.ffc.flush()
-                    log(f"[C] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} ({fc['compute_s']}s)")
-                    if plausible and action.startswith("BID"):
-                        side = action[4:]; bid = mkt if side == "UP" else 1 - mkt
-                        self.pending.append(dict(strategy="C", T=T, side=side, bid=bid, placed_ms=int(time.time() * 1000), until=T, p=p, mkt=mkt))
-                        self.forder.write(json.dumps(dict(strategy="C", T=T, side=side, bid=bid, placed=round(time.time(), 2), placed_delay=round(time.time() - T, 2), event="placed")) + "\n"); self.forder.flush()
-                        log(f"[C] REST BID {side} @{bid:.3f} until the open")
-                # ---- btc-predict forecast at the minute boundary T-60 (seconds < T-60)
-                if now >= T - 58 and ("bp", T) not in self.done and self.tl.known >= (T - 60) - self.tl.t0_epoch:
-                    self.done.add(("bp", T))
-                    try:
-                        lo = (T - 60) - 60 * 2880 - 900; i0 = lo - self.tl.t0_epoch; i1 = (T - 60) - self.tl.t0_epoch
-                        v = lambda k: self.tl.view(k, i0, i1)
-                        spot = dict(o=v("s_open"), h=v("s_high"), l=v("s_low"), c=v("s_close"), v=v("s_volume"), qv=v("s_qvol"), n=v("s_count"), bv=v("s_tb_base"))
-                        um = dict(o=v("p_open"), h=v("p_high"), l=v("p_low"), c=v("p_close"), v=v("p_buy") + v("p_sell"), qv=v("p_qv"), n=v("p_ntr"), bv=v("p_buy"), nb=v("p_nb"), lbv=v("p_lbv"), lsv=v("p_lsv"), mxq=v("p_maxq"))
-                        eth = dict(c=v("e_c"), v=v("e_v"), bv=v("e_bv"))
-                        tb = time.time(); z, ts_last = self.bp.forecast(spot, um, eth, lo); self.bp_z[T] = z
-                        log(f"[bp] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} z_s5={z['s5']:+.3f} z_s1={z['s1']:+.3f} (bar {ts_last:%H:%M}, {time.time()-tb:.1f}s, spot lag {self.lat(T - 58)['spot_lag']}s)")
-                    except Exception as e:
-                        log("bp error", repr(e)[:200])
-                # ---- strategy A decision at T-45 (bars through T-46 final at ~T-44)
-                if now >= T - 43.5 and ("A", T) not in self.done and self.tl.known >= (T - 45) - self.tl.t0_epoch:
-                    self.done.add(("A", T)); fc = self.model.forecast(T, -45, 0); p = fc.get("close_p", np.nan)
-                    feed = self.feed_for(T); mkt, _ = feed.last_up() if feed else (np.nan, None)
-                    z5 = self.bp_z.get(T, {}).get("s5", np.nan)
-                    agree = bool(np.isfinite(z5) and np.sign(z5) == np.sign(p - 0.5))
-                    plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)
-                    action = "skip" if not plausible else ("BUY " + ("UP" if p > 0.5 else "DOWN") if abs(p - 0.5) >= CFG_A["thr"] and feed is not None and agree else "none")
-                    self.ffc.write(json.dumps(dict(strategy="A", T=T, ts=round(time.time(), 2), market=mkt, z_s5=z5, agree=agree, action=action, **self.lat(T - 43.5, feed, T - 46), **fc)) + "\n"); self.ffc.flush()
-                    if not plausible:
-                        log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} SKIP: implausible forecast (p0={fc.get('p0')}, p={p}) - data gap?"); continue
-                    log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} p_close={p:.3f} bp_z5={z5:+.3f} agree={agree} market={mkt:.3f} ({fc['compute_s']}s)")
-                    if action.startswith("BUY"):
-                        side = action[4:]
-                        self.positions.append(Position("A", T, side, CFG_A["entry"], int((T - 45) * 1000), CFG_A, p, mkt)); log(f"[A] BUY {side} @0.50 (assumed pre-open fill)")
-                        if self.exec: self.exec.buy("A", T, side, CFG_A["entry"], T - 40, feed.up, feed.down, self.conds.get(T), CFG_A["tp"])
-                        self.positions.append(Position("A0", T, side, CFG_A0["entry"], int((T - 45) * 1000), CFG_A0, p, mkt))   # shadow with the previous exits
-                # ---- strategy B decision at T (bars through T-1 final at ~T+1.5)
-                if T - 300 + 1.6 <= now < T - 300 + 10 and ("B", T - 300) not in self.done and self.tl.known >= (T - 300) - self.tl.t0_epoch:   # skip stale windows after a restart
-                    Tb = T - 300; self.done.add(("B", Tb))
-                    fc = self.model.forecast(Tb, -LAG, LAG); p = fc.get("close_p", np.nan)
-                    feed = self.feed_for(Tb); mkt, mts = feed.last_up() if feed else (np.nan, None)
-                    plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)
-                    action = "skip" if not plausible else ("BID " + ("UP" if p > mkt else "DOWN") if np.isfinite(mkt) and abs(p - mkt) >= CFG_B["delta"] else "none")
-                    mkt_preT = feed.last_up(before_ms=Tb * 1000)[0] if feed else np.nan
-                    self.ffc.write(json.dumps(dict(strategy="B", T=Tb, ts=round(time.time(), 2), market=mkt, market_preT=mkt_preT, action=action, **self.lat(Tb + 1.6, feed, Tb - 1), **fc)) + "\n"); self.ffc.flush()
-                    log(f"[B] T={dt.datetime.fromtimestamp(Tb, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} p0={fc['p0']:.1f} now={fc['price_now']:.1f} ({fc['compute_s']}s)")
-                    if not plausible:
-                        log(f"[B] T={dt.datetime.fromtimestamp(Tb, dt.UTC):%H:%M} SKIP: implausible forecast (p0={fc.get('p0')}, p={p}) - data gap?"); continue
-                    if action.startswith("BID"):
-                        side = action[4:]; bid = mkt if side == "UP" else 1 - mkt
-                        self.pending.append(dict(strategy="B", T=Tb, side=side, bid=bid, placed_ms=int(time.time() * 1000), until=time.time() + CFG_B["cancel"], p=p, mkt=mkt))
-                        self.forder.write(json.dumps(dict(strategy="B", T=Tb, side=side, bid=bid, placed=round(time.time(), 2), placed_delay=round(time.time() - Tb, 2), event="placed")) + "\n"); self.forder.flush()
-                        log(f"[B] REST BID {side} @{bid:.3f} for {CFG_B['cancel']}s")
-                        if self.exec: self.exec.buy("B", Tb, side, round(bid, 2), time.time() + CFG_B["cancel"], feed.up, feed.down, self.conds.get(Tb), CFG_B["tp"])
+                for cst, ccfg in CAPTURE.items():
+                    if cst not in ENABLED: continue
+                    if Td + ccfg["decide"] + 1.6 <= now < Td + ccfg["decide"] + 10 and (cst, Td) not in self.done and self.tl.known >= (Td + ccfg["decide"]) - self.tl.t0_epoch:
+                        self.done.add((cst, Td)); fc = self.model.forecast(Td, -LAG, LAG + ccfg["decide"]); p = fc.get("close_p", np.nan)
+                        feed = self.feed_for(Td); mkt, _ = feed.last_up() if feed else (np.nan, None)
+                        plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.01 < p < 0.99)
+                        side = "UP" if p >= 0.5 else "DOWN"; ps_model = p if side == "UP" else 1 - p; ps_mkt = mkt if side == "UP" else 1 - mkt
+                        action = "skip" if not plausible else (f"BID {side}" if np.isfinite(mkt) and ps_model >= ccfg["q"] and ps_mkt <= ccfg["maxpx"] else "none")
+                        self.ffc.write(json.dumps(dict(strategy=cst, T=Td, ts=round(time.time(), 2), market=mkt, action=action, **self.lat(Td + ccfg["decide"] + 1.6, feed, Td + ccfg["decide"] - 1), **fc)) + "\n"); self.ffc.flush()
+                        log(f"[{cst}] T={dt.datetime.fromtimestamp(Td, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} ({fc['compute_s']}s)")
+                        if plausible and action.startswith("BID"):
+                            self.pending.append(dict(strategy=cst, T=Td, side=side, bid=ps_mkt, placed_ms=int(time.time() * 1000), until=time.time() + ccfg["cancel"], p=p, mkt=mkt))
+                            self.forder.write(json.dumps(dict(strategy=cst, T=Td, side=side, bid=ps_mkt, placed=round(time.time(), 2), placed_delay=round(time.time() - Td, 2), event="placed")) + "\n"); self.forder.flush()
+                            log(f"[{cst}] REST BID {side} @{ps_mkt:.3f} for {ccfg['cancel']}s (model {ps_model:.3f})")
+                            if self.exec and cst in LIVE_STRATEGIES: self.exec.buy(cst, Td, side, round(ps_mkt, 2), time.time() + ccfg["cancel"], feed.up, feed.down, self.conds.get(Td), None)
                 if self.exec: self.exec.poll(now, get_outcome)
                 # ---- pending maker orders
                 for o in list(self.pending):
