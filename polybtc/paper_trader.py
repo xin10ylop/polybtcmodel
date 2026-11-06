@@ -11,7 +11,7 @@ Everything is logged to paper/: forecasts.jsonl (every window), paper_trades.jso
 Run:  python polybtc/paper_trader.py            (foreground; use nohup)
       python polybtc/paper_trader.py --summary [--since 2026-11-05T13:20]  (P&L report from the logs, optionally only windows from that UTC instant on)
 """
-import os, sys, json, time, threading, datetime as dt, traceback
+import os, sys, json, time, threading, datetime as dt, traceback, signal
 import numpy as np, pandas as pd, requests, websocket
 import socket as _socket
 if os.environ.get("FORCE_IPV4", "1") == "1":                 # data-centre hosts often have a broken IPv6 route: prefer IPv4 everywhere
@@ -579,6 +579,13 @@ class Trader:
 
     def run(self):
         log("paper trader started"); last_T = None; t_start = time.time()
+        def _term(signum, frame):
+            log(f"signal {signum}: stopping")
+            if self.exec:
+                try: self.exec.shutdown()
+                except Exception as e: log(f"executor shutdown failed: {repr(e)[:120]}")
+            LOG.flush(); os._exit(0)
+        signal.signal(signal.SIGTERM, _term); signal.signal(signal.SIGINT, _term)
         self.heartbeat = time.time()
         def watchdog():                                    # main loop silent > 180 s: dump all stacks, exit (restart loop)
             import faulthandler
