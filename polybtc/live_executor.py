@@ -21,7 +21,7 @@ import os, json, time, math, datetime as dt, threading, traceback
 
 STAKE_USD = float(os.environ.get("STAKE_USD", "10"))
 MIN_SHARES = 5.0
-MAX_OPEN = int(os.environ.get("MAX_OPEN", "3"))
+MAX_OPEN = int(os.environ.get("MAX_OPEN", "4"))
 DAILY_LOSS_LIMIT = float(os.environ.get("DAILY_LOSS_LIMIT", "-100"))
 DRY_RUN = os.environ.get("DRY_RUN", "1") == "1"
 ALLOW_TAKER = os.environ.get("ALLOW_TAKER", "0") == "1"   # default: post-only everywhere, a fee can never be paid

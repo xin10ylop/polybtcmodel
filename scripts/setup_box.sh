@@ -31,7 +31,7 @@ export PAPER_DIR=/home/user/paper; mkdir -p $PAPER_DIR
 cd /home/user/polybtcmodel
 for pid in $(ps -eo pid,cmd | awk '/[p]aper_trader.py/ {print $1}'); do kill $pid; done; sleep 2    # one trader only
 export PERP_FEED=${PERP_FEED:-okx}     # PERP_FEED=binance (stream) or binance_rest (polling) on a non-US host; okx otherwise
-export LIVE=${LIVE:-0} DRY_RUN=${DRY_RUN:-1} STAKE_USD=${STAKE_USD:-10} MAX_OPEN=${MAX_OPEN:-3} DAILY_LOSS_LIMIT=${DAILY_LOSS_LIMIT:--100}   # LIVE=1 DRY_RUN=0 + POLYMARKET_* keys = real orders
+export LIVE=${LIVE:-0} DRY_RUN=${DRY_RUN:-1} STAKE_USD=${STAKE_USD:-10} MAX_OPEN=${MAX_OPEN:-4} DAILY_LOSS_LIMIT=${DAILY_LOSS_LIMIT:--100}   # LIVE=1 DRY_RUN=0 + POLYMARKET_* keys = real orders
 echo "   perp feed $PERP_FEED | live $LIVE (dry_run $DRY_RUN, stake \$$STAKE_USD)"
 nohup bash -c 'while true; do /home/user/venv/bin/python3 -W ignore polybtc/paper_trader.py >> $PAPER_DIR/stdout.log 2>&1; echo "trader exited $(date -u)" >> $PAPER_DIR/stdout.log; sleep 5; done' > /dev/null 2>&1 &
 sleep 5; tail -3 $PAPER_DIR/paper.log 2>/dev/null || true

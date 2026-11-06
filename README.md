@@ -240,6 +240,28 @@ test / July; p = 0.004 on test) because ~80% of trades that reach the take-profi
 print still resolves our way often enough that the stop lost money once settlement was allowed. Previous exits: T+240 time-stop, 0.05 stop
 (sell at market). Test period with these exits: +3.3¢ per share, 64% win rate, Sharpe 12.5.
 
+## Go-live audit (2026-11-06)
+
+| layer | test | result |
+|---|---|---|
+| model vs backtest, live code path | `research/replay_live_day.py`: 2026-11-04 streamed through the trader's timeline with real feed delays | A mean error 0.0019, decisions differ on 1 % of windows; B identical |
+| model vs backtest, real feeds on the box | `paper_audit.py --day 2026-11-05 --since 13:20 --sample 1` (Binance REST perp, Frankfurt) | A 0.0061 (max 0.029), signed −0.0003, 1 decision of 127 differs; B 0.0055, 1 differs; btc-predict 0.012 |
+| perp feed completeness | `scripts/perp_feed_check.py` on the box | 33 trades/s, 5.1 BTC/s vs archive 25 / 1.2 for the hour: complete |
+| timeline integrity | `synth_last60` / `ffill_last60` on every decision record | 0 synthetic seconds on 128 windows |
+| timing | audit latency section | decisions 0.37 s after schedule (p95 0.55), feeds < 1.2 s old |
+| rules | audit rules section | 127 A and 256 B/C/D decisions, 0 mismatches |
+| exits | audit exits section, replayed on Polymarket's trade history | 19 trades, 0 mismatches, P&L identical to the cent |
+| orders | simulated exchange (partial fills, cancel/fill race, status errors, STOP, crossing post-only) | sell limit per fill chunk, race fill recorded, loop never stalls, fees $0.00 |
+| SDK | `from polymarket import SecureClient, RelayerApiKey` on the box | ok |
+| position cap | backtest decisions blocked by MAX_OPEN | 3 blocks 0.2 % of decisions, 4 blocks none → run with `MAX_OPEN=4` |
+| daily loss limit | `research/daily_tp_A.py` | a malfunction guard only; −$60 at $10 stakes fires on ~1 day in 20 and costs little |
+| withdrawals | `research/withdrawals.py` | start $300, every Sunday withdraw everything above $400 |
+
+Known limits: a resting 0.50 bid for A and a bid at the last print for B fill only if someone sells into them (the backtest assumes the A fill and
+simulates B's by later prints; the audit replays B fills with 4 disagreements in 13); the first live week measures the real fill rates. The 14 A trades
+of the night of 2026-11-05/06 (5 wins) are statistically ordinary (a 14-trade stretch this bad occurs in 3.5 % of the backtest's stretches) and get the
+same parity check on 2026-11-07.
+
 ## 8. Paper trading (`polybtc/paper_trader.py`)
 
 Feeds: Binance spot and ETH 1 s klines (websocket mirror + REST backfill), OKX BTC-USDT perpetual trades
