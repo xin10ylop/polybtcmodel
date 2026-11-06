@@ -42,7 +42,7 @@ CFG_A0 = dict(thr=0.05, entry=0.50, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=
 CFG_C = dict(delta=0.08, decide=-5, tp=0.80, sl=0.05, tstop=240, slip=0.01, fee=0.07)   # "B five seconds early": bid at the last print from T-5 until the open
 LAG = 30
 CFGS = {"A": CFG_A, "A0": CFG_A0, "B": CFG_B, "B0": CFG_B0, "C": CFG_C, "D": CFG_D, "E": CFG_E}
-ENABLED = {"A", "B", "D", "E"}     # C switched off 2026-11-05 at the user's request; E added 2026-11-06 as a paper-only candidate
+ENABLED = {"A", "B", "D"}          # C switched off 2026-11-05 and E dropped 2026-11-06 at the user's request (code kept; add the letter here to run one)
 
 
 def log(*a):
