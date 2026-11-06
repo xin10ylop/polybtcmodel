@@ -27,6 +27,7 @@ DRY_RUN = os.environ.get("DRY_RUN", "1") == "1"
 ALLOW_TAKER = os.environ.get("ALLOW_TAKER", "0") == "1"   # default: post-only everywhere, a fee can never be paid
 PAPER = os.environ.get("PAPER_DIR") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "paper")
 STOP_FILE = os.path.join(PAPER, "STOP")
+CFG_TP = {"A": 0.85, "B": 0.85, "D": None}   # sell limit per strategy (mirrors paper_trader CFG_*; used only when re-posting after a restart)
 LOG = open(os.path.join(PAPER, "live.log"), "a")
 
 
@@ -65,6 +66,10 @@ class SDK:
         if DRY_RUN: return True
         return self.client.cancel_order(order_id=order_id)
 
+    def cancel_all(self):
+        if DRY_RUN: return True
+        return self.client.cancel_all()
+
     def status(self, order_id):
         """-> (status, size_matched). Field names per manage-orders docs; adjust there if the SDK names differ."""
         if DRY_RUN: return "live", 0.0
@@ -84,7 +89,39 @@ class LiveExecutor:
         self.positions = {}       # (strategy, T) -> dict(side, token, cond, size, entry, sell_order, settled)
         self.day = None; self.day_pnl = 0.0; self.halted = False
         self.fo = open(os.path.join(PAPER, "live_orders.jsonl"), "a"); self.ft = open(os.path.join(PAPER, "live_trades.jsonl"), "a")
+        self.pos_file = os.path.join(PAPER, "live_positions.json")
         log(f"executor up: stake ${STAKE_USD}, max open {MAX_OPEN}, daily loss limit ${DAILY_LOSS_LIMIT}, dry_run={DRY_RUN}")
+        if not DRY_RUN:
+            if not os.environ.get("POLYMARKET_RELAYER_API_KEY"): log("WARNING: no POLYMARKET_RELAYER_API_KEY: winning positions held to settlement will NOT be redeemed automatically")
+            try: self.sdk.cancel_all(); log("startup: cancelled every resting order left by a previous run")
+            except Exception as e: log(f"startup cancel_all FAILED: {repr(e)[:120]} - check the Polymarket UI for resting orders")
+        self._load_positions()
+
+    # ---------------------------------------------------------------- persistence (a restart must not forget shares it holds)
+    def _save_positions(self):
+        try:
+            tmp = self.pos_file + ".tmp"
+            json.dump({f"{k[0]}|{k[1]}": p for k, p in self.positions.items() if not p["settled"]}, open(tmp, "w")); os.replace(tmp, self.pos_file)
+        except Exception as e: log(f"save positions failed: {repr(e)[:100]}")
+
+    def _load_positions(self):
+        if not os.path.exists(self.pos_file): return
+        try: saved = json.load(open(self.pos_file))
+        except Exception as e: log(f"load positions failed: {repr(e)[:100]}"); return
+        now = time.time()
+        for key, p in saved.items():
+            st, T = key.split("|"); T = int(T); p["sell_order"] = None; p["sell_orders"] = []; p["next_check"] = 0.0
+            self.positions[(st, T)] = p; held = p["size"] - p["sold"]
+            log(f"[{st}] restored position from a previous run: {p['side']} x{held:.2f} @{p['entry']:.2f} (window {dt.datetime.fromtimestamp(T, dt.UTC):%H:%M})")
+            tp = CFG_TP.get(st)
+            if held >= 0.01 and tp is not None and now < T + 300 and not DRY_RUN:   # re-post the sell for the shares still held
+                try:
+                    r, taker = self._place(p["token"], "SELL", tp, held)
+                    p["sell_order"] = r["order_id"]; p["sell_orders"] = [r["order_id"]]
+                    self.orders[r["order_id"]] = dict(strategy=st, T=T, side=p["side"], token=p["token"], cond=p["cond"], price=tp, size=held, kind="sell", cancel_at=None, filled=0.0, tp=None, placed=now, taker=taker)
+                    log(f"[{st}] re-posted SELL limit @{tp:.2f} x{held:.2f} order {r['order_id']}")
+                except Exception as e: log(f"[{st}] re-post SELL failed ({repr(e)[:100]}); holding to settlement")
+        self._save_positions()
 
     # ---------------------------------------------------------------- helpers
     def _rec(self, f, **d):
@@ -142,7 +179,7 @@ class LiveExecutor:
         o["filled"] = matched
         key = (o["strategy"], o["T"])
         p = self.positions.setdefault(key, dict(side=o["side"], token=o["token"], cond=o["cond"], size=0.0, entry=o["price"], sell_order=None, sell_orders=[], settled=False, sold=0.0, pnl=0.0, next_check=0.0))
-        p["size"] += new; fee = taker_fee(o["price"], new) if o.get("taker") else 0.0; p["pnl"] -= fee; self.day_pnl -= fee
+        p["size"] += new; fee = taker_fee(o["price"], new) if o.get("taker") else 0.0; p["pnl"] -= fee; self.day_pnl -= fee; self._save_positions()
         self._rec(self.ft, event="fill", order_id=oid, strategy=o["strategy"], T=o["T"], side=o["side"], price=o["price"], size=new, kind="buy", fee=round(fee, 4), pnl=round(-fee, 4))
         log(f"[{o['strategy']}] FILLED {o['side']} @{o['price']:.2f} x{new:.2f} (T{time.time()-o['T']:+.1f}s)" + (f" taker fee {fee:.2f}" if fee else ""))
         if o["tp"] is not None and new >= 0.01:          # a sell limit for exactly the shares just filled (a later partial fill gets its own)
@@ -151,7 +188,7 @@ class LiveExecutor:
                 p["sell_order"] = p["sell_order"] or r["order_id"]; p["sell_orders"].append(r["order_id"])
                 self.orders[r["order_id"]] = dict(strategy=o["strategy"], T=o["T"], side=o["side"], token=o["token"], cond=o["cond"], price=o["tp"], size=new, kind="sell", cancel_at=None, filled=0.0, tp=None, placed=time.time(), taker=taker)
                 self._rec(self.fo, event="placed", order_id=r["order_id"], strategy=o["strategy"], T=o["T"], side=o["side"], price=o["tp"], size=new, kind="sell", status=r.get("status"), taker=taker)
-                log(f"[{o['strategy']}] SELL limit @{o['tp']:.2f} x{new:.2f} order {r['order_id']}{' TAKER' if taker else ''}")
+                log(f"[{o['strategy']}] SELL limit @{o['tp']:.2f} x{new:.2f} order {r['order_id']}{' TAKER' if taker else ''}"); self._save_positions()
             except Exception as e:
                 log(f"[{o['strategy']}] SELL limit not placed ({repr(e)[:120]}); holding to settlement")
 
@@ -163,6 +200,7 @@ class LiveExecutor:
         self._rec(self.ft, event="fill", order_id=oid, strategy=o["strategy"], T=o["T"], side=o["side"], price=o["price"], size=new, kind="sell", fee=round(fee, 4), pnl=round(pnl, 4))
         log(f"[{o['strategy']}] SOLD @{o['price']:.2f} x{new:.2f}  pnl {pnl:+.2f}  (day {self.day_pnl:+.2f})")
         if p["sold"] >= p["size"] - 1e-6: p["settled"] = True
+        self._save_positions()
 
     # ---------------------------------------------------------------- periodic maintenance (called from the trader loop)
     def poll(self, now, outcome_fn):
@@ -217,7 +255,7 @@ class LiveExecutor:
                             except Exception as e: log(f"cancel sell {so} failed: {repr(e)[:100]}")
                             del self.orders[so]
                     held = p["size"] - p["sold"]; won = (out == 1) == (p["side"] == "UP"); pnl = ((1.0 if won else 0.0) - p["entry"]) * held
-                    p["pnl"] += pnl; self.day_pnl += pnl; p["settled"] = True
+                    p["pnl"] += pnl; self.day_pnl += pnl; p["settled"] = True; self._save_positions()
                     self._rec(self.ft, event="settle", strategy=key[0], T=key[1], side=p["side"], size=held, entry=p["entry"], won=won, pnl=round(pnl, 4))
                     log(f"[{key[0]}] SETTLED {p['side']} x{held:.2f} {'WON' if won else 'LOST'}  pnl {pnl:+.2f}  (day {self.day_pnl:+.2f})")
                     if won and held > 0:
