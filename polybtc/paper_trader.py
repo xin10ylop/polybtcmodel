@@ -33,7 +33,7 @@ LOG = open(os.path.join(PAPER, "paper.log"), "a")
 DAY = 86400
 CFG_B = dict(delta=0.12, cancel=10, tp=0.85, sl=None, tstop=None, settle=True, slip=0.01, fee=0.07)   # adopted 2026-11-04: sell 0.85 else settle (research/ideas10.py)
 CFG_B0 = dict(delta=0.12, cancel=10, tp=0.80, sl=0.10, tstop=240, slip=0.01, fee=0.07)               # previous exits, shadow
-CFG_D = dict(decide=90, q=0.90, maxpx=0.90, cancel=10, tp=None, sl=None, tstop=None, settle=True, slip=0.01, fee=0.07)   # high-confidence settlement capture (research/ideas10.py idea 6)
+CFG_D = dict(decide=90, q=0.90, maxpx=0.90, minpx=0.80, cancel=10, tp=None, sl=None, tstop=None, settle=True, slip=0.01, fee=0.07)   # high-confidence settlement capture (research/ideas10.py idea 6); minpx 0.80 since 2026-11-06 (research/d_winrate.py)
 CFG_E = dict(decide=260, q=0.80, maxpx=0.90, cancel=10, tp=None, sl=None, tstop=None, settle=True, slip=0.01, fee=0.07)  # last-minute capture (research/last_minute.py): PAPER ONLY until validated live
 CAPTURE = {"D": CFG_D, "E": CFG_E}   # strategies that bid at the last print at T+decide and hold to settlement
 LIVE_STRATEGIES = {"A", "B", "D"}    # the executor places real orders only for these
@@ -627,7 +627,7 @@ class Trader:
                         feed = self.feed_for(Td); mkt, _ = feed.last_up() if feed else (np.nan, None)
                         plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.01 < p < 0.99)
                         side = "UP" if p >= 0.5 else "DOWN"; ps_model = p if side == "UP" else 1 - p; ps_mkt = mkt if side == "UP" else 1 - mkt
-                        action = "skip" if not plausible else (f"BID {side}" if np.isfinite(mkt) and ps_model >= ccfg["q"] and ps_mkt <= ccfg["maxpx"] else "none")
+                        action = "skip" if not plausible else (f"BID {side}" if np.isfinite(mkt) and ps_model >= ccfg["q"] and ccfg.get("minpx", 0.0) <= ps_mkt <= ccfg["maxpx"] else "none")
                         self.ffc.write(json.dumps(dict(strategy=cst, T=Td, ts=round(time.time(), 2), market=mkt, action=action, **self.lat(Td + ccfg["decide"] + 1.6, feed, Td + ccfg["decide"] - 1), **fc)) + "\n"); self.ffc.flush()
                         log(f"[{cst}] T={dt.datetime.fromtimestamp(Td, dt.UTC):%H:%M} p_close={p:.3f} market={mkt:.3f} ({fc['compute_s']}s)")
                         if plausible and action.startswith("BID"):

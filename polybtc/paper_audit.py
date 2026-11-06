@@ -132,7 +132,7 @@ def rules(day, fcs, trades, orders):
             if st == "D":
                 plausible = np.isfinite(r.get("p0", np.nan) or np.nan) and np.isfinite(p) and 0.01 < p < 0.99
                 side = "UP" if p >= 0.5 else "DOWN"; psm = p if side == "UP" else 1 - p; psk = mkt if side == "UP" else 1 - mkt
-                expect = plausible and np.isfinite(mkt) and psm >= cfgx["q"] and psk <= cfgx["maxpx"]
+                expect = plausible and np.isfinite(mkt) and psm >= cfgx["q"] and cfgx.get("minpx", 0.0) <= psk <= cfgx["maxpx"]
             else:
                 expect = plausible and np.isfinite(mkt) and abs(p - mkt) >= cfgx["delta"]
                 side = "UP" if p > mkt else "DOWN"
