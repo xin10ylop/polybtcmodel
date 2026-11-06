@@ -141,16 +141,17 @@ class LiveExecutor:
         if new <= 0: return
         o["filled"] = matched
         key = (o["strategy"], o["T"])
-        p = self.positions.setdefault(key, dict(side=o["side"], token=o["token"], cond=o["cond"], size=0.0, entry=o["price"], sell_order=None, settled=False, sold=0.0, pnl=0.0))
+        p = self.positions.setdefault(key, dict(side=o["side"], token=o["token"], cond=o["cond"], size=0.0, entry=o["price"], sell_order=None, sell_orders=[], settled=False, sold=0.0, pnl=0.0, next_check=0.0))
         p["size"] += new; fee = taker_fee(o["price"], new) if o.get("taker") else 0.0; p["pnl"] -= fee; self.day_pnl -= fee
         self._rec(self.ft, event="fill", order_id=oid, strategy=o["strategy"], T=o["T"], side=o["side"], price=o["price"], size=new, kind="buy", fee=round(fee, 4), pnl=round(-fee, 4))
         log(f"[{o['strategy']}] FILLED {o['side']} @{o['price']:.2f} x{new:.2f} (T{time.time()-o['T']:+.1f}s)" + (f" taker fee {fee:.2f}" if fee else ""))
-        if o["tp"] is not None and p["sell_order"] is None:
+        if o["tp"] is not None and new >= 0.01:          # a sell limit for exactly the shares just filled (a later partial fill gets its own)
             try:
-                r, taker = self._place(o["token"], "SELL", o["tp"], p["size"])
-                p["sell_order"] = r["order_id"]; self.orders[r["order_id"]] = dict(strategy=o["strategy"], T=o["T"], side=o["side"], token=o["token"], cond=o["cond"], price=o["tp"], size=p["size"], kind="sell", cancel_at=None, filled=0.0, tp=None, placed=time.time(), taker=taker)
-                self._rec(self.fo, event="placed", order_id=r["order_id"], strategy=o["strategy"], T=o["T"], side=o["side"], price=o["tp"], size=p["size"], kind="sell", status=r.get("status"), taker=taker)
-                log(f"[{o['strategy']}] SELL limit @{o['tp']:.2f} x{p['size']:.2f} order {r['order_id']}{' TAKER' if taker else ''}")
+                r, taker = self._place(o["token"], "SELL", o["tp"], new)
+                p["sell_order"] = p["sell_order"] or r["order_id"]; p["sell_orders"].append(r["order_id"])
+                self.orders[r["order_id"]] = dict(strategy=o["strategy"], T=o["T"], side=o["side"], token=o["token"], cond=o["cond"], price=o["tp"], size=new, kind="sell", cancel_at=None, filled=0.0, tp=None, placed=time.time(), taker=taker)
+                self._rec(self.fo, event="placed", order_id=r["order_id"], strategy=o["strategy"], T=o["T"], side=o["side"], price=o["tp"], size=new, kind="sell", status=r.get("status"), taker=taker)
+                log(f"[{o['strategy']}] SELL limit @{o['tp']:.2f} x{new:.2f} order {r['order_id']}{' TAKER' if taker else ''}")
             except Exception as e:
                 log(f"[{o['strategy']}] SELL limit not placed ({repr(e)[:120]}); holding to settlement")
 
@@ -177,28 +178,44 @@ class LiveExecutor:
                     if DRY_RUN:
                         st, matched = "live", o["filled"]
                     else:
-                        st, matched = self.sdk.status(oid)
+                        try:
+                            st, matched = self.sdk.status(oid); o["err"] = 0
+                        except Exception as e:                    # one order's lookup must never stall the others
+                            o["err"] = o.get("err", 0) + 1
+                            if o["err"] in (1, 10, 100): log(f"status {oid} failed x{o['err']}: {repr(e)[:100]}")
+                            if o["kind"] == "buy" and o["cancel_at"] is not None and now >= o["cancel_at"]:
+                                try: self.sdk.cancel(oid)
+                                except Exception: pass
+                            continue
+                    st = str(st).lower()
                     if o["kind"] == "buy":
                         if matched > o["filled"]: self._on_fill(oid, matched)
                         if o["cancel_at"] is not None and now >= o["cancel_at"] and o["filled"] < o["size"]:
                             try: self.sdk.cancel(oid)
                             except Exception as e: log(f"cancel {oid} failed: {repr(e)[:100]}")
+                            if not DRY_RUN:                          # a fill can land in the same instant as the cancel: look once more
+                                try:
+                                    st2, m2 = self.sdk.status(oid)
+                                    if m2 > o["filled"]: self._on_fill(oid, m2)
+                                except Exception: pass
                             self._rec(self.fo, event="cancelled", order_id=oid, filled=o["filled"]); log(f"[{o['strategy']}] cancelled unfilled BUY {o['side']} @{o['price']:.2f} ({o['filled']:.2f}/{o['size']:.2f} filled)")
                             del self.orders[oid]
                         elif st in ("cancelled", "canceled", "expired") or (o["filled"] >= o["size"] - 1e-6):
                             del self.orders[oid]
                     else:
                         if matched > o["filled"]: self._on_sell_fill(oid, matched)
-                        if o["filled"] >= o["size"] - 1e-6: del self.orders[oid]
+                        if o["filled"] >= o["size"] - 1e-6 or st in ("cancelled", "canceled", "expired"): del self.orders[oid]
                 # settlement: a position still held 60 s after the close resolves to 1 or 0; cancel its sell, book it, redeem
                 for key, p in list(self.positions.items()):
-                    if p["settled"] or now < key[1] + 300 + 60: continue
+                    if p["settled"] or now < key[1] + 300 + 60 or now < p.get("next_check", 0): continue
+                    p["next_check"] = now + 15.0
                     out = outcome_fn(key[1])
                     if out is None: continue
-                    if p["sell_order"] and p["sell_order"] in self.orders:
-                        try: self.sdk.cancel(p["sell_order"])
-                        except Exception as e: log(f"cancel sell {p['sell_order']} failed: {repr(e)[:100]}")
-                        del self.orders[p["sell_order"]]
+                    for so in list(p.get("sell_orders", [])) + ([p["sell_order"]] if p.get("sell_order") else []):
+                        if so in self.orders:
+                            try: self.sdk.cancel(so)
+                            except Exception as e: log(f"cancel sell {so} failed: {repr(e)[:100]}")
+                            del self.orders[so]
                     held = p["size"] - p["sold"]; won = (out == 1) == (p["side"] == "UP"); pnl = ((1.0 if won else 0.0) - p["entry"]) * held
                     p["pnl"] += pnl; self.day_pnl += pnl; p["settled"] = True
                     self._rec(self.ft, event="settle", strategy=key[0], T=key[1], side=p["side"], size=held, entry=p["entry"], won=won, pnl=round(pnl, 4))
