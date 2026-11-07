@@ -57,7 +57,7 @@ def run(cfg, fn, label):
     eq = usd.cumsum(); r["usd_total"] = float(eq.iloc[-1]) if len(eq) else 0.0; r["usd_maxdd"] = float((eq.cummax() - eq).max()) if len(eq) else 0.0
     r["usd_worst_day"] = float(usd.min()) if len(usd) else 0.0; r["neg_days"] = int((usd < 0).sum()); r["usd_per_day"] = float(usd.mean()) if len(usd) else 0.0
     print(f"\n=== {label} {json.dumps(cfg)} ===")
-    print(pd.Series(r)[["signals", "fill_rate", "n", "days", "trades_per_day", "avg_entry", "mean", "ret", "win", "p_tp", "p_sl", "sharpe", "maxdd", "tstat", "usd_total", "usd_per_day", "usd_maxdd", "usd_worst_day", "neg_days"]].round(4).to_string())
+    print(pd.Series(r).reindex(["signals", "fill_rate", "n", "days", "trades_per_day", "avg_entry", "mean", "ret", "win", "p_tp", "p_sl", "sharpe", "maxdd", "tstat", "usd_total", "usd_per_day", "usd_maxdd", "usd_worst_day", "neg_days"]).round(4).to_string())
     if len(rec):
         print("by side:"); print(rec.groupby("side").pnl.agg(["size", "mean", lambda x: np.mean(x > 0)]).round(4).rename(columns={"<lambda_0>": "win"}).to_string())
         wk = rec.assign(week=pd.to_datetime(rec.date).dt.isocalendar().week).groupby("week").pnl.agg(["size", "mean", lambda x: np.mean(x > 0)]).round(4).rename(columns={"<lambda_0>": "win"})

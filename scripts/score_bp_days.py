@@ -18,7 +18,7 @@ while day <= d1:
         sl = lambda d: {k: v[:n] for k, v in d.items()}
         try:
             z, ts_last = bp.forecast(sl(spot), sl(um), sl(eth), t0)
-            rows.append(dict(ts=pd.Timestamp(inst, unit="s"), z_s5=z.get("s5", np.nan), z_s1=z.get("s1", np.nan)))
+            rows.append(dict(ts=pd.Timestamp(inst - 60, unit="s"), z_s5=z.get("s5", np.nan), z_s1=z.get("s1", np.nan)))   # bar time; build_master takes the forecast instant as ts+60
         except Exception as e:
             rows.append(dict(ts=pd.Timestamp(inst, unit="s"), z_s5=np.nan, z_s1=np.nan))
     print(f"{day}: {len(rows)} rows ({time.time()-t_w:.0f}s)", flush=True); day += dt.timedelta(days=1)
