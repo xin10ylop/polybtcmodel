@@ -12,12 +12,12 @@ Writes exports/kronos_forecasts.parquet and prints: AUC by period (stand-alone),
 """
 import os, sys, time, argparse, numpy as np, pandas as pd
 ap = argparse.ArgumentParser(); ap.add_argument("--model", default="small"); ap.add_argument("--samples", type=int, default=10); ap.add_argument("--batch", type=int, default=32)
-ap.add_argument("--limit", type=int, default=0); ap.add_argument("--all-windows-stride", type=int, default=8); ap.add_argument("--context", type=int, default=512); ap.add_argument("--eval-only", action="store_true")
+ap.add_argument("--limit", type=int, default=0); ap.add_argument("--all-windows-stride", type=int, default=8); ap.add_argument("--internal-samples", type=int, default=5); ap.add_argument("--context", type=int, default=512); ap.add_argument("--eval-only", action="store_true")
 a = ap.parse_args()
 HERE = os.path.dirname(os.path.abspath(__file__)); EXP = os.path.join(HERE, "..", "exports"); OUT = os.path.join(EXP, "kronos_forecasts.parquet")
 bars = pd.read_parquet(os.path.join(EXP, "btc_1m_2026-05-25_2026-11-07.parquet")).sort_values("ts").reset_index(drop=True)
 W = pd.read_parquet(os.path.join(EXP, "windows_A.parquet")).sort_values("T").reset_index(drop=True)
-sel = W[(W.traded == 1) | (np.arange(len(W)) % a.all_windows_stride == 0)]        # all A trades + a stride of all windows for the stand-alone test
+sel = W[(W.traded == 1) | ((np.arange(len(W)) % a.all_windows_stride == 0) if a.all_windows_stride > 0 else False)]        # all A trades + a stride of all windows for the stand-alone test
 if a.limit: sel = sel.head(a.limit)
 if not a.eval_only:
     sys.path.insert(0, os.environ.get("KRONOS_DIR", "/home/user/ext/Kronos"))
@@ -39,7 +39,7 @@ if not a.eval_only:
             dfs.append(x[["open", "high", "low", "close", "volume"]].reset_index(drop=True)); xts.append(pd.Series(pd.to_datetime(x.ts.values, unit="s")))
             yts.append(pd.Series(pd.to_datetime(np.arange(T - 60, T + 300, 60), unit="s"))); keep.append(T)
         if not dfs: continue
-        preds = pred.predict_batch(dfs, xts, yts, pred_len=6, T=1.0, top_p=0.9, sample_count=a.samples, verbose=False)
+        preds = pred.predict_batch(dfs, xts, yts, pred_len=6, T=1.0, top_p=0.9, sample_count=a.internal_samples, verbose=False)   # one call: the model averages internal_samples paths
         # predict_batch averages the samples internally; to get a probability we also run single-sample draws when samples > 1
         for T, p in zip(keep, preds):
             c = p["close"].values; ref = float(c[0]); end_px = float(c[5])
