@@ -11,9 +11,9 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 sys.path.insert(0, "/home/user/polybtcmodel/research/deep"); from common import load, auc, DEEP  # noqa: E402
 ASSET = os.environ.get("ASSET", "BTC"); PHASES = [int(x) for x in os.environ.get("PHASES", "0").split(",")]; TAG = os.environ.get("TAG", "ph0")
-BOOK = os.environ.get("BOOK", "0") == "1"; TARGET = os.environ.get("TARGET", "twap"); FIRST = os.environ.get("FIRST", "2025-10"); THREADS = int(os.environ.get("THREADS", "3"))
+DEC = int(os.environ.get("DEC", "-45")); DTAG = "" if DEC == -45 else f"d{DEC}_"; BOOK = os.environ.get("BOOK", "0") == "1"; TARGET = os.environ.get("TARGET", "twap"); FIRST = os.environ.get("FIRST", "2025-10"); THREADS = int(os.environ.get("THREADS", "3"))
 LEARNERS = os.environ.get("LEARNERS", "logit,lgb_bin,lgb_reg").split(",")
-D = pd.concat([pd.read_parquet(f) for ph in PHASES for f in glob.glob(f"{DEEP}/feats_{ASSET}_ph{ph}_*.parquet")], ignore_index=True).sort_values("T").reset_index(drop=True)
+D = pd.concat([pd.read_parquet(f) for ph in PHASES for f in glob.glob(f"{DEEP}/feats_{ASSET}_{DTAG}ph{ph}_*.parquet")], ignore_index=True).sort_values("T").reset_index(drop=True)
 LAB = ["T", "phase", "y_twap", "x_twap", "y_pt", "x_pt", "x_dec", "price"]
 FEATS = [c for c in D.columns if c not in LAB and D[c].std() > 0 and c not in ("e", "x_bps", "x_v", "wmax_v", "wmin_v", "ncross", "fup", "tsc")]
 if BOOK:
@@ -25,7 +25,7 @@ if BOOK:
     BK = ["bk_imb0.2", "bk_imb1.0", "bk_imb2.0", "bk_imb5.0", "bk_outer", "bk_ldepth_rel"]; idx = bd.index.values.astype(np.int64)
     def asof(when):
         j = np.searchsorted(idx, when, side="right") - 1; ok = j >= 0; v = np.where(ok[:, None], bd[BK].values[np.maximum(j, 0)], np.nan); v[np.where(ok, when - idx[np.maximum(j, 0)], 1e9) > 120] = np.nan; return v
-    now = asof(D["T"].values - 47); ago = asof(D["T"].values - 347)
+    now = asof(D["T"].values + DEC - 2); ago = asof(D["T"].values + DEC - 302)
     for k, c in enumerate(BK): D[c] = now[:, k].astype(np.float32)
     D["bk_dimb1.0_300"] = (now[:, 1] - ago[:, 1]).astype(np.float32); FEATS += BK + ["bk_dimb1.0_300"]
     print("book coverage by year-month (share of windows with a snapshot):", D.groupby(pd.to_datetime(D["T"], unit="s").dt.strftime("%Y-%m"))["bk_imb1.0"].apply(lambda s: s.notna().mean()).round(2).to_dict())
@@ -62,8 +62,8 @@ if "lgb_bin300" in P and "lgb_reg300" in P:
     rk = lambda v: pd.Series(v).rank(pct=True).values
     P["avg(bin300,reg300)"] = np.where(np.isfinite(P["lgb_bin300"]), (rk(np.where(np.isfinite(P["lgb_bin300"]), P["lgb_bin300"], np.nan)) + rk(np.where(np.isfinite(P["lgb_reg300"]), P["lgb_reg300"], np.nan))) / 2, np.nan)
 out = pd.DataFrame({"T": D["T"].values, "ym": D.ym.values, "y_twap": D.y_twap.values, "y_pt": D.y_pt.values, "x_twap": D.x_twap.values, **P})[(D.phase.values == 0) & np.isin(D.ym.values, MONTHS)]
-out.to_parquet(f"{DEEP}/ourcase_{ASSET}_{TAG}.parquet", index=False)
-M = load(ASSET, ["m2_-45_close_p", "bp_-60_z_s5"]).reindex(out["T"].values); up = M.up.values; m2 = M["m2_-45_close_p"].values
+out.to_parquet(f"{DEEP}/ourcase_{ASSET}_{DTAG}{TAG}.parquet", index=False)
+M = load(ASSET, [f"m2_{DEC}_close_p", "bp_-60_z_s5"]).reindex(out["T"].values); up = M.up.values; m2 = M[f"m2_{DEC}_close_p"].values
 rows = []
 for nm in P:
     r = {"model": nm}

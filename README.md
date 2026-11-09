@@ -377,3 +377,78 @@ box before gating, because they cannot be checked from this container (Binance's
    The spot imbalance was NOT tested against the outcome (no spot book archive); run it in shadow for a few days and
    compare `book.jsonl` with the perp archive's snapshots of the same day (`scripts/fetch_extra_feeds.py <day> <day>
    --only binance`) before letting it gate.
+
+## 10. Deep dive (2026-11-09): what really drives A, a model built for our target, and real fills
+
+Scripts in `research/deep/` and `scripts/dump_feats.py`, `scripts/dump_cross.py`, `scripts/train_ourcase_prod.py`; reports `reports/deep_*.csv`.
+
+### 10.1 Anatomy of A (`research/deep/anatomy_A.py`)
+* A's win rate is mostly exit mechanics. With a 0.50 entry and a 0.85 sell limit a coin flip already "wins" 58.8 % of the time
+  (0.50 / 0.85); A's 62–64 % is that plus a direction accuracy of only 52–56 %.
+* The 0.05 threshold on the close head is not where the edge is: given that btc-predict agrees, the direction edge is +2 to +2.6 ¢ per
+  share in every confidence bucket from 0.01 to 0.05 (17,000 windows) and about the same above. Agreement of independent signals
+  matters more than the size of one of them.
+* Cross-asset votes (ETH heads on BTC trades and the reverse) are inconsistent; rejected.
+
+### 10.2 A model built for our target (`scripts/dump_feats.py`, `research/deep/ourcase_model.py`)
+The frozen heads were trained for other targets (P(close ≥ open) at every second of a window; a 5-minute point return). The new model
+is trained directly on ours: **Binance TWAP60 over [T+240, T+300) vs TWAP60 over [T−60, T)**, from the btcmovement2 feature engine at the
+decision time (106 features) plus the book-depth imbalances (7), on **every 5-minute window since January 2025** (190k windows, 958k
+with five grid phases as augmentation; Binance `bookDepth` downloaded back to 2025-01). LightGBM on the volatility-standardized TWAP
+move, 300 rounds, fixed hyper-parameters.
+* Protocol against overfitting: walk-forward by month (the model for month M sees nothing after M−1 day); variants compared on
+  **Oct 2025 – May 2026** (Binance label only, a period no rule in this project ever touched); June – November 2026 is confirmation only.
+* AUC vs the Polymarket outcome, Jun · Jul · Aug · Sep · Oct · Nov · pooled:
+  frozen close head 0.511 · 0.506 · 0.525 · 0.521 · 0.527 · 0.540 · **0.519**;
+  purpose-built 0.520 · 0.523 · 0.537 · 0.533 · 0.538 · 0.543 · **0.531** (better in all six months; +60 % signal above 0.5).
+  ETH (eth3 engine, same recipe): frozen 0.519 pooled → **0.536** (0.534 · 0.536 · 0.535 · 0.531 · 0.544 · 0.542).
+* It subsumes the other inputs: stacking it with btc-predict's z, the frozen head and the book adds nothing (0.527–0.529).
+  Cross-asset inputs add nothing (BTC 0.531, ETH 0.536). btc-predict's panel retargeted to the TWAP label: 0.521 vs 0.518, marginal.
+* It barely degrades with an earlier decision: **0.529 at T−60, 0.526 at T−90, 0.526 at T−120** (frozen head there: 0.508–0.510).
+* The book-depth signal on 22 months: AUC > 0.5 in 21 of 23 months, weak through most of 2025 (0.50–0.52), 0.52–0.53 since Dec 2025.
+* Production boosters trained on everything: `models/ourcase_BTC_d{-120,-90,-45}.txt` + `.json` (feature order, tier thresholds).
+
+### 10.3 The fill assumption (`research/deep/maker_sim2.py`, `fill_sensitivity.py`, `flow_timing.py`, `pm_flow.py`)
+Every A number in this README assumes the 0.50 bid is always filled. The prints carry the aggressor side, so this can be tested: a resting
+BUY of our token at 0.50 is filled only when a taker sells our token at ≤ 0.50 or buys the other token at ≥ 0.50.
+* Before the open 97 % of prints are taker BUYS, mostly at 0.51 (market makers quote 0.49 / 0.51 on both tokens). A 0.50 bid is filled
+  by people buying the OTHER side. Those takers are right more often than not: a 0.50 bid on a random side loses 0.7 ¢ per filled share
+  ten minutes before the open and 2.9 ¢ in the last 15 seconds.
+* The market's own last price before T−45 predicts the outcome with AUC 0.522 (ETH 0.529), i.e. as well as the frozen head (0.519).
+* Frozen A, BTC: a 0.50 bid placed at T−45 fills by T−40 in 28 % of the signals and by the open in 73 %. The trades that would fill
+  earn +0.9 ¢; **the trades that would not fill are the good ones (+9.6 ¢, 70 % win)**. ETH: 41 % fill by the open, filled −1.6 ¢,
+  unfilled +6.7 ¢. Taking the 0.51 ask instead costs the 1.75 ¢ taker fee: negative.
+* Frozen A with real fills (bid 0.50 from T−45 to the open, $100): −0.5 ¢ per share [95 % CI −2.1, +1.1], −$48 a day, 84 losing days of 160.
+
+### 10.4 What works with real fills (`research/deep/real_fill_opt.py`, `robust_eval.py`, `reports/deep_robust_BTC.csv`)
+Pre-specified family, nothing tuned per tier or period: purpose-built model at a decision time, the top 15 % (or 5 %) of |score| against
+the months before, a 0.50 bid on that side until the open, fills only when the print trades through the bid, sell 0.85 else settle,
+$ capped by the taker flow that actually traded against the bid. 160 days, day-block bootstrap.
+
+| rule (BTC, $100) | fills/day | win | ¢ per share [95 % CI] | $/day [95 % CI] | by period (¢): Jun · Jul · Aug1–19 · tune · test · Nov4–7 |
+|---|---|---|---|---|---|
+| frozen A, assumed fill | 32.8 | 62.6 % | +3.3 [2.1, 4.5] | 217 | +4.2 · +2.9 · +2.0 · +3.1 · +4.7 · +0.7 |
+| frozen A, real fills | 18.1 | 58.2 % | −0.5 [−2.1, 1.1] | −48 [−104, 6] | +4.6 · −0.8 · −1.2 · −1.6 · +0.1 · −7.5 |
+| new @T−45 top 15 %, real | 18.2 | 60.8 % | +1.7 [0.1, 3.4] | 37 [−16, 91] | +6.2 · +1.5 · +1.0 · +1.3 · +1.4 · +0.8 |
+| new @T−90 top 15 %, real | 19.2 | 61.4 % | +2.3 [0.5, 3.9] | 67 [6, 127] | +1.9 · +2.7 · −2.3 · +3.4 · +1.9 · +2.2 |
+| **new @T−120 top 15 %, real** | 20.3 | 61.3 % | **+2.1 [0.5, 3.7]** | **61 [−2, 121]** | +1.9 · +2.3 · +0.9 · +2.5 · +1.9 · +2.6 |
+| new @T−120 top 5 %, real | 5.8 | 64.7 % | +5.0 [2.2, 7.7] | 56 [24, 88] | +3.7 · +2.8 · −3.6 · +7.7 · +4.0 · +9.5 |
+
+* Only the most confident 15 % of signals have a real edge, at every decision time; the next 15 % are at zero and the rest lose.
+* Bidding earlier is better: the flow is less informed and fills are plentiful, while the purpose-built model loses little accuracy.
+* It does not scale with the stake: at $300 the T−120 top-15 % rule makes about $100 a day and at $500 less, because the big fills are
+  the adverse ones; the top-5 % tier scales better ($56 → $122 → $146 a day at $100 / $300 / $500).
+* A 0.51 bid looks better in the table of `deep_robust_BTC.csv` but is usually marketable against the 0.51 ask (a taker order with the fee);
+  it is only a maker order when the ask is 0.52 or higher. Not counted here.
+* ETH with real fills is negative for the frozen rule and for the new model at T−45 (thin market, 10 fills a day at $25, adverse);
+  earlier decision times were not built for ETH.
+* Overfitting status: the model is clean (walk-forward, selected on a period no rule saw). The rule family is small and every member
+  with an early decision and the top 15 % is positive, but the family itself was shaped after looking at these 160 days. It is a
+  hypothesis until real order logs confirm the fill rates and the edge of filled trades.
+
+### 10.5 What to do
+1. Measure real fills first: every order the box sends for A must log placed / filled / cancelled with the fill time. Two weeks settle
+   whether "always filled at 0.50" holds; the backtest says it does not.
+2. If fills are selective as simulated, replace A's signal by the purpose-built model and its entry by "top 15 %, 0.50 bid from T−120
+   (or T−90) until the open", starting in shadow next to the frozen rule.
+3. Do not raise the stake to recover profit; add the top-5 % tier at a larger stake instead.

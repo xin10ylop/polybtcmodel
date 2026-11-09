@@ -17,7 +17,7 @@ from btcmodel.timeline import load_timeline
 from btcmodel.features import Base, FeatureEngine, W
 from btcmodel.regime import regime_features
 from btcmodel.predictor import Predictor
-OUT = "/home/user/data/deep"; D = -45
+OUT = "/home/user/data/deep"; D = int(os.environ.get("DEC", "-45"))      # decision offset from the nominal open (features use seconds < T+D)
 
 def ffill(a):
     a = np.asarray(a, np.float64); m = ~np.isfinite(a) | (a <= 0); idx = np.where(~m, np.arange(len(a)), 0); np.maximum.accumulate(idx, out=idx); return a[idx]
@@ -36,15 +36,15 @@ def chunk(tl, pr, c0, c1, phase):
     X = X.astype(np.float32); Tn = Tw + phase                                    # nominal window start (local index)
     lo, hi = Tn.min() - 400, Tn.max() + 400; c = ffill(tl["s_close"][lo:hi]); o = ffill(tl["s_open"][lo:hi]); i = Tn - lo
     cs = np.concatenate([[0.0], np.cumsum(c)]); mean = lambda u, v: (cs[v] - cs[u]) / (v - u)          # mean of c[u:v]
-    tw0, tw1 = mean(i - 60, i), mean(i + 240, i + 300); k15 = mean(i - 60, i - 45); now = c[i - 46]
+    tw0, tw1 = mean(i - 60, i), mean(i + 240, i + 300); k15 = mean(i - 60, i - 45); now = c[i + D - 1]
     out = pd.DataFrame({"T": tl.t0_epoch + Tn, "phase": np.int16(phase), "y_twap": (tw1 >= tw0).astype(np.int8), "x_twap": 1e4 * np.log(tw1 / tw0),
                         "y_pt": (c[i + 299] >= o[i]).astype(np.int8), "x_pt": 1e4 * np.log(c[i + 299] / o[i]), "x_dec": 1e4 * np.log(tw1 / now),
-                        "f_disp15": (1e4 * np.log(now / k15)).astype(np.float32), "price": now})
+                        "f_disp15": ((1e4 * np.log(now / k15)) if D == -45 else np.full(len(i), np.nan)).astype(np.float32), "price": now})      # the part of the start TWAP already known at T-45 (not known earlier)
     return pd.concat([out, X.reset_index(drop=True)], axis=1)
 
 if __name__ == "__main__":
     d0, d1 = dt.date.fromisoformat(sys.argv[1]), dt.date.fromisoformat(sys.argv[2]); phase = int(sys.argv[3]); step = int(sys.argv[4]) if len(sys.argv) > 4 else 12
-    f = f"{OUT}/feats_{ASSET}_ph{phase}_{d0}_{d1}.parquet"
+    f = f"{OUT}/feats_{ASSET}_" + ("" if D == -45 else f"d{D}_") + f"ph{phase}_{d0}_{d1}.parquet"
     if os.path.exists(f): print("exists", f); sys.exit()
     tl = load_timeline(); pr = Predictor.load_dir(MODEL); parts = []; d = d0; t0 = time.time()
     while d <= d1:
