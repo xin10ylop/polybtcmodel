@@ -19,7 +19,7 @@ bars = pd.read_parquet("/home/user/polybtcmodel/exports/btc_1m_2026-05-25_2026-1
 bars["amount"] = bars.volume * bars[["open", "high", "low", "close"]].mean(1)
 parts = []
 for mp in ("/home/user/data/master_june.parquet", "/home/user/data/master_july_L0.parquet", "/home/user/data/master.parquet", "/home/user/data/master_nov.parquet"):
-    parts.append(pd.read_parquet(mp, columns=["date", "up", "m2_-45_close_p", "bm_-45_close_p", "bp_-60_z_s5", "bp_-60_z_s1"]))
+    parts.append(pd.read_parquet(mp, columns=["date", "up", "m2_-45_close_p", "bp_-60_z_s5", "bp_-60_z_s1"]))
 W = pd.concat(parts); W = W[~W.index.duplicated(keep="last")].sort_index(); W["date"] = pd.to_datetime(W.date); W["month"] = W.date.dt.strftime("%b")
 T = W.index.values.astype(np.int64)
 if not os.path.exists(OUT):
@@ -44,7 +44,7 @@ E = pd.read_parquet(OUT).loc[W.index]; print("embeddings", E.shape, "coverage", 
 
 def logit(p): p = np.clip(p, 1e-4, 1 - 1e-4); return np.log(p / (1 - p))
 MONTHS = ["Jun", "Jul", "Aug", "Sep", "Oct", "Nov"]; mon = W.month.values; y = W.up.values.astype(int)
-heads = np.column_stack([logit(W["m2_-45_close_p"].values), logit(W["bm_-45_close_p"].values), W["bp_-60_z_s5"].values, W["bp_-60_z_s1"].values])
+heads = np.column_stack([logit(W["m2_-45_close_p"].values), W["bp_-60_z_s5"].values, W["bp_-60_z_s1"].values])
 LGB = dict(objective="binary", learning_rate=0.03, num_leaves=15, min_data_in_leaf=300, feature_fraction=0.6, bagging_fraction=0.7, bagging_freq=1, lambda_l2=20.0, verbose=-1, num_threads=4)
 def walk(Xf, learner, npca=None):
     pred = np.full(len(W), np.nan)
@@ -54,7 +54,7 @@ def walk(Xf, learner, npca=None):
         if tr.sum() < 2000 or te.sum() == 0: continue
         Xtr, Xte = Xf[tr], Xf[te]
         if npca:   # PCA on the embedding block (columns 4:), fitted on the training months only
-            pca = PCA(npca).fit(Xtr[:, 4:]); Xtr = np.column_stack([Xtr[:, :4], pca.transform(Xtr[:, 4:])]); Xte = np.column_stack([Xte[:, :4], pca.transform(Xte[:, 4:])])
+            pca = PCA(npca).fit(Xtr[:, 3:]); Xtr = np.column_stack([Xtr[:, :3], pca.transform(Xtr[:, 3:])]); Xte = np.column_stack([Xte[:, :3], pca.transform(Xte[:, 3:])])
         if learner == "logit":
             sc = StandardScaler().fit(Xtr); lr = LogisticRegression(C=0.05, max_iter=1000).fit(sc.transform(Xtr), y[tr]); pred[te] = lr.predict_proba(sc.transform(Xte))[:, 1]
         else:
@@ -64,7 +64,7 @@ P = {"frozen m2 head": W["m2_-45_close_p"].values, "heads [logit]": walk(heads, 
 full = np.column_stack([heads, E.values])
 for k in (8, 32):
     P[f"heads+kronos pca{k} [logit]"] = walk(full, "logit", k); P[f"heads+kronos pca{k} [lgb]"] = walk(full, "lgb", k)
-P["kronos only pca32 [logit]"] = walk(np.column_stack([np.zeros((len(W), 4)), E.values]), "logit", 32)
+P["kronos only pca32 [logit]"] = walk(np.column_stack([np.zeros((len(W), 3)), E.values]), "logit", 32)
 rows = []
 for nm, p in P.items():
     for mo in MONTHS:

@@ -20,7 +20,7 @@ OUT = "/home/user/polybtcmodel/reports"; os.makedirs(OUT, exist_ok=True)
 def logit(p): p = np.clip(p, 1e-4, 1 - 1e-4); return np.log(p / (1 - p))
 
 # ------------------------------------------------------------------ windows
-HEADS = ["m2_-45_close_p", "bm_-45_close_p", "bp_-60_z_s5", "bp_-60_z_s1"]
+HEADS = ["m2_-45_close_p", "bp_-60_z_s5", "bp_-60_z_s1"]   # btc-movement is not scored for Nov 4-7 and the live rule does not use it
 RAW = ['m2_-45_x_bps', 'm2_-45_lrv_300', 'm2_-45_lrvsa_300', 'm2_-45_lrv_3600', 'm2_-45_seas_now', 'm2_-45_jump_300', 'm2_-45_pls_5', 'm2_-45_pls_10',
        'm2_-45_bdev_60', 'm2_-45_bdev_300', 'm2_-45_r_10', 'm2_-45_r_30', 'm2_-45_pimb_10', 'm2_-45_prev_ret_v', 'm2_-45_reg_ll_beta_1h', 'm2_-45_reg_catchup_1h',
        'm2_-45_reg_vr300_1d', 'm2_-45_reg_rv_1d_7d', 'm2_-45_reg_trend_1d', 'm2_-45_close_mu', 'm2_-45_close_sig', 'm2_-45_h60_mu', 'm2_-45_h10_mu']
@@ -43,12 +43,12 @@ def venue(name):
         d = pd.Timestamp(os.path.basename(f)[:10]); i0 = int((d - D0).total_seconds())
         if i0 < 0 or i0 + 86400 > NSEC: continue
         t = pd.read_parquet(f); close[i0:i0 + 86400] = t.close.values; buy[i0:i0 + 86400] = t.buy.values; sell[i0:i0 + 86400] = t.sell.values; have[i0:i0 + 86400] = True
-    close = pd.Series(close).ffill().values; close[~have] = np.nan
+    close = pd.Series(close).ffill().to_numpy().copy(); close[~have] = np.nan
     return close, np.cumsum(buy, dtype=np.float64), np.cumsum(sell, dtype=np.float64)
 
 def binance_perp():
     pc = np.load(f"{TL}/p_close.npy", mmap_mode="r"); pb = np.load(f"{TL}/p_buy.npy", mmap_mode="r"); ps = np.load(f"{TL}/p_sell.npy", mmap_mode="r")
-    o = BASE - TL0; close = np.array(pc[o:o + NSEC], dtype=np.float64); close = pd.Series(close).replace(0, np.nan).ffill().values
+    o = BASE - TL0; close = np.array(pc[o:o + NSEC], dtype=np.float64); close = pd.Series(close).replace(0, np.nan).ffill().to_numpy().copy()
     return close, np.cumsum(np.array(pb[o:o + NSEC], dtype=np.float64)), np.cumsum(np.array(ps[o:o + NSEC], dtype=np.float64))
 
 def wsum(cs, i, k): return cs[i] - cs[np.maximum(i - k, 0)]
@@ -100,12 +100,12 @@ if mt_files:
     for col in cols: F[f"mt_{col}"] = now[col].values
     F.loc[now.age.values > 900, [f"mt_{c_}" for c_ in cols]] = np.nan
     MET = [f"mt_{c_}" for c_ in cols]
-print("features: cross-venue", len(XV), "book", len(BOOK), "metrics", len(MET), " coverage:", {k: f"{np.isfinite(F[v[0]]).mean():.0%}" for k, v in (("xv", (XV,)), ("book", (BOOK,)), ("met", (MET,))) if v[0]}, flush=True)
+print("features: cross-venue", len(XV), "book", len(BOOK), "metrics", len(MET), " coverage:", {k: f"{np.isfinite(F[v[0]]).mean():.0%}" for k, v in (("xv", XV), ("book", BOOK), ("met", MET)) if v}, flush=True)
 F.to_parquet(f"{OUT}/../exports/new_inputs_features.parquet")
 
 # ------------------------------------------------------------------ models, walk-forward by month
 MONTHS = ["Jun", "Jul", "Aug", "Sep", "Oct", "Nov"]
-base = pd.DataFrame({"l_m2": logit(W["m2_-45_close_p"].values), "l_bm": logit(W["bm_-45_close_p"].values), "z5": W["bp_-60_z_s5"].values, "z1": W["bp_-60_z_s1"].values}, index=W.index)
+base = pd.DataFrame({"l_m2": logit(W["m2_-45_close_p"].values), "z5": W["bp_-60_z_s5"].values, "z1": W["bp_-60_z_s1"].values}, index=W.index)
 SETS = {"heads": list(base.columns), "heads+xv": list(base.columns) + XV, "heads+book": list(base.columns) + BOOK, "heads+metrics": list(base.columns) + MET,
         "heads+all": list(base.columns) + XV + BOOK + MET, "heads+all+raw": list(base.columns) + XV + BOOK + MET + RAW}
 X_all = pd.concat([base, F, W[RAW]], axis=1); y = W.up.values.astype(int); mon = W.month.values
