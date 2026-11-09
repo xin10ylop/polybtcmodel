@@ -55,6 +55,7 @@ print(grid[(grid.tp == 0.65) & (grid.sl == 0.30) & (grid.tstop == 290)][["delta"
 # frozen live rule (README): m2 close head |p-0.5| >= 0.05, btc-predict 5-min z at T-60 agreeing in sign, TP 0.80 / SL 0.05 / T+240
 CFG_A = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.50, "signal": "m2_-45_close_p", "agree": "bp_-60_z_s5", "thr": 0.05, "tp": 0.85, "sl": None, "tstop": None, "settle": True}
 CFG_A0 = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.50, "signal": "m2_-45_close_p", "agree": "bp_-60_z_s5", "thr": 0.05, "tp": 0.80, "sl": 0.05, "tstop": 240}   # previous frozen exits (shadow)
+CFG_AB = dict(CFG_A, book_agree="1.0")   # A + book vote (2026-11-09, research/book_vote_A.py): win rate up in all five periods at ~60% of the trades
 CFG_B = dict(fs.CFG_B); CFG_B0 = dict(fs.CFG_B0); CFG_B2 = dict(fs.CFG_B2); CFG_C = dict(fs.CFG_C); CFG_D = dict(fs.CFG_D)
 
 
@@ -70,11 +71,13 @@ def trades_A2(cfg, master, mk, g):
     sel = np.isfinite(p) & (np.abs(p - 0.5) >= cfg["thr"])
     if cfg.get("agree"):
         z = m[cfg["agree"]].values; sel &= np.isfinite(z) & (np.sign(z) == np.sign(p - 0.5))
+    if cfg.get("book_agree"):   # third vote: Binance perp book-depth imbalance within book_agree % of mid, known at T-47 (polybtc/bookdepth.py)
+        import bookdepth; b = bookdepth.archive_imbalance(m.index.values.astype(np.int64), level=cfg["book_agree"]); sel &= np.isfinite(b) & (np.sign(b) == np.sign(p - 0.5))
     return m, sim, p, side, sel, {}
 fs.trades_A = trades_A2
 summary = {}
 recs = {}
-for nm, cfg in (("A_preopen", CFG_A), ("A0_preopen_frozen_exits", CFG_A0), ("B_open_mispricing", CFG_B), ("B0_open_mispricing_frozen_exits", CFG_B0), ("B2_open_mispricing_delta008", CFG_B2), ("C_preopen_follow", CFG_C), ("D_high_confidence_settle", CFG_D)):
+for nm, cfg in (("A_preopen", CFG_A), ("A0_preopen_frozen_exits", CFG_A0), ("AB_preopen_book_vote", CFG_AB), ("B_open_mispricing", CFG_B), ("B0_open_mispricing_frozen_exits", CFG_B0), ("B2_open_mispricing_delta008", CFG_B2), ("C_preopen_follow", CFG_C), ("D_high_confidence_settle", CFG_D)):
     res, rec = fs.evaluate(cfg, label=nm)
     summary[nm] = {"config": cfg, "results": res.round(5).to_dict()}
     rec.to_csv(f"{OUT}/trades_{nm}.csv", index=False); recs[nm] = rec

@@ -25,6 +25,7 @@ print(f"{MONTH} master: {len(master)} windows, {master.date.min()} .. {master.da
 
 CFG_A = {"kind": "A", "decision_offset": -45, "fill_by": -45, "entry_price": 0.50, "signal": "m2_-45_close_p", "agree": "bp_-60_z_s5", "thr": 0.05, "tp": 0.85, "sl": None, "tstop": None, "settle": True}
 CFG_A0 = dict(CFG_A, tp=0.80, sl=0.05, tstop=240, settle=False)
+CFG_AB = dict(CFG_A, book_agree="1.0")   # A + book-depth vote (polybtc/bookdepth.py)
 CFG_B, CFG_B0, CFG_D = dict(fs.CFG_B), dict(fs.CFG_B0), dict(fs.CFG_D)
 
 def trades_A(cfg, master, mk, g):   # same as final_report_data.trades_A2 (live rule: m2 close head + btc-predict agreement, no bm stack)
@@ -39,6 +40,8 @@ def trades_A(cfg, master, mk, g):   # same as final_report_data.trades_A2 (live 
     sel = np.isfinite(p) & (np.abs(p - 0.5) >= cfg["thr"])
     if cfg.get("agree"):
         z = m[cfg["agree"]].values; sel &= np.isfinite(z) & (np.sign(z) == np.sign(p - 0.5))
+    if cfg.get("book_agree"):
+        import bookdepth; b = bookdepth.archive_imbalance(m.index.values.astype(np.int64), level=cfg["book_agree"]); sel &= np.isfinite(b) & (np.sign(b) == np.sign(p - 0.5))
     return m, sim, p, side, sel, {}
 
 def run(cfg, fn, label):
@@ -65,9 +68,9 @@ def run(cfg, fn, label):
     return r, rec, usd
 
 out = {}; daily = {}
-for nm, cfg, fn in (("A", CFG_A, trades_A), ("A0", CFG_A0, trades_A), ("B", CFG_B, fs.trades_B), ("B0", CFG_B0, fs.trades_B), ("D", CFG_D, fs.trades_B)):
+for nm, cfg, fn in (("A", CFG_A, trades_A), ("A0", CFG_A0, trades_A), ("AB", CFG_AB, trades_A), ("B", CFG_B, fs.trades_B), ("B0", CFG_B0, fs.trades_B), ("D", CFG_D, fs.trades_B)):
     r, rec, usd = run(cfg, fn, f"{nm} ({MONTH})"); out[nm] = r; daily[nm] = usd
-    if nm in ("A", "B", "D"): rec.to_csv(os.path.join(HERE, "..", "reports", f"trades_{nm}_{mon}.csv"), index=False)
+    if nm in ("A", "AB", "B", "D"): rec.to_csv(os.path.join(HERE, "..", "reports", f"trades_{nm}_{mon}.csv"), index=False)
 comb = pd.concat([daily[k].rename(k) for k in ("A", "B", "D")], axis=1).fillna(0); comb["A+B+D"] = comb.A + comb.B + comb.D
 eq = comb["A+B+D"].cumsum()
 print(f"\n== {MONTH} A+B+D at $100 per trade: total ${eq.iloc[-1]:.0f} (${comb['A+B+D'].mean():.0f}/day), max dd ${(eq.cummax()-eq).max():.0f}, worst day ${comb['A+B+D'].min():.0f}, negative days {(comb['A+B+D']<0).sum()}/{len(comb)}, corr(A,B) {comb.A.corr(comb.B):.2f}")

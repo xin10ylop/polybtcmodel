@@ -264,6 +264,8 @@ same parity check on 2026-11-07.
 
 ## 8. Paper trading (`polybtc/paper_trader.py`)
 
+**Bug found 2026-11-09 (fixed in commit c4ba29f):** the commit that added candidate E on 2026-11-06 (288aca1) deleted the A, B and C decision blocks and the btc-predict forecast from the main loop; a trader running that code (Nov 6 onward) only decided D. Any box log from that period has no A/B decisions. Restored verbatim; the only differences to the pre-bug file are the intended later changes (E, D's `minpx`).
+
 Feeds: Binance spot and ETH 1 s klines (websocket mirror + REST backfill), OKX BTC-USDT perpetual trades
 (REST polling; the Binance perpetual is geo-blocked here, OKX stands in for the lead-lag feature), the
 Polymarket CLOB market websocket (prints and books). Model history from the local archive; the btc-predict
@@ -332,3 +334,46 @@ Model-improvement experiments (accepted only if tune and test both improve with 
 | late-flip exit for A (`research/early_flip_exit.py`, `reports/A_early_flip_exit_{main,july}.csv`): after the 0.50 fill, re-evaluate the close head at T−40 … T+30 and sell at the market when P(our side) < q | the later forecasts do carry information (a flip at T0 cuts the hit rate of the original side from 59% to 45%, at T+30 from 65% to 38%) but the market has already repriced by then: every rule (q 0.35–0.50, 7 checkpoint sets) is ≤ the frozen exits on tune (bootstrap p 0.2–0.98), mixed on test, and all are worse in July | rejected |
 | **Kronos as a second agreement filter for A** (`research/kronos_eval.py`, `exports/kronos_forecasts.parquet`, `reports/kronos_filter_A.csv`): the open-source K-line foundation model Kronos-small (pretrained through mid-2024, so all our data is out of sample for it) run on the last 512 one-minute bars known at T−120, predicting the next 6 bars (5 sampled paths averaged); scored on all 5,242 windows A traded Jun 1 – Nov 7 at 3.3 s/window on 4 CPU cores | stand-alone it is a weak signal, like our own 5-minute heads: AUC 0.53 June, 0.53 July, 0.52 Aug 20 – Nov 3 (0.40 on the 109 Nov 4–7 trades), with a mild bearish lean (P(up) 0.45). As a filter it agrees with A's side on 55 % of A's trades and those trades are better in every main period: edge +5.8 vs +2.1 ¢ June, +4.9 vs +0.3 July, +3.1 vs +2.9 tune, +5.4 vs +3.9 test; pooled +4.5 vs +2.0 ¢ (t 2.1, bootstrap CI 0.2–4.6 ¢). But the disagreeing half is still profitable everywhere ($900 / $220 / $3,350 / $4,820 per period at $100), so dropping it loses money in every period; Nov 4–7 reverses the sign (50 vs 59 trades). A stake tilt ($150 on agreement, $50 on disagreement, same average) gains +30 / +46 / +8 / +11 % on June / July / tune / test and −$825 on Nov 4–7 | **not adopted as a filter** (costs money in every period); the tilt is real but small on the two TWAP-era periods and needs a 3-second GPU-less inference at T−45 plus a live 1-minute bar feed; parked until there are more live months to judge it on |
 | btcmovement2 refit on 2025 → Jul 2026 (`scripts/refit_m2.sh`, `scripts/train_m2_wf.py`, `scripts/score_m2_new.py`; windows thinned 1/4 (2025) and 1/3 (2026) to fit 15 GB) | worse than the frozen April model at T−45: AUC 0.511 vs 0.518 (tune), 0.523 vs 0.529 (test); test P&L +2.25¢ vs +2.9¢ at the live threshold | rejected; frozen `wf5_20260430` kept |
+| **TCN on raw second-level channels** (`research/seq_model_A.py`, `exports/seq_preds.parquet`): 6-level dilated temporal CNN on 600 s of spot/perp returns, flow imbalances, volumes, basis ending at T−47, trained forward (Jun 1–Sep 20, validated Sep 21–30) and backward (Aug 30–Nov 7, validated Aug 20–29) | out-of-sample AUC 0.495–0.507 in every month; a stack with the frozen head adds nothing | rejected |
+| **new information sources for A** (`scripts/fetch_extra_feeds.py`, `research/new_inputs_A.py`, `research/new_inputs_A2.py`, `reports/A_new_inputs_{auc,trades,equal_count}.csv`, `exports/new_inputs_{features,preds}.parquet`): Bybit and OKX perp trades (cross-venue flow, lead-lag), Binance perp book depth (bid/ask notional within 0.2–5 % of mid, 30-s snapshots), Binance perp metrics (open interest, long/short and taker ratios), 51 features at T−47, walk-forward by month (Aug–Nov from earlier months, Jun/Jul backwards) with logistic and LightGBM learners | the multivariate models lift Oct/Nov AUC (0.548/0.563 vs 0.527/0.540) but at equal trade count they lose on tune and June (win 58.7 % / 59.1 % vs 62.2 % / 63.6 %); cross-venue flow and the metrics carry no stable sign; **one feature does: the book-depth imbalance within 1 % of mid** (univariate AUC 0.515–0.529 in all six months) | multivariate: rejected; book imbalance: **adopted as a vote, section 9** |
+| **Kronos embedding probe** (`research/kronos_probe_A.py`, `reports/A_kronos_probe.csv`): the 512-d context vector of Kronos-small over 256 one-minute bars ending at T−60, PCA 8/32, stacked with the frozen heads walk-forward | AUC +0.005 to +0.012 in four months, −0.009 / −0.001 in Aug / Nov; Kronos alone 0.520–0.524 everywhere | rejected (same weak signal as the Kronos forecasts) |
+
+## 9. The book-depth vote for A (2026-11-09)
+
+**Finding.** Of all the new inputs tested (section above), one has the same relation to the outcome in every month:
+the Binance USDT-M perp **order-book imbalance within ±1 % of mid**, `(bid notional − ask notional) / (bid + ask)` from
+the 30-second `bookDepth` snapshots on data.binance.vision, read at T−47 (decision T−45 minus latency; median
+snapshot age 12 s). When the imbalance has the sign of the side A is about to buy, A is right more often, in all six
+months (directional accuracy agree vs disagree: Jun 56.1 / 51.5, Jul 55.1 / 47.3, Aug 53.6 / 52.6, Sep 53.9 / 50.3,
+Oct 57.6 / 54.1, Nov 56.5 / 50.6 %). Pooled over 4,200 A trades the agree/disagree win-rate gap is 4.5 points (t ≈ 3).
+
+**Rule.** A trades only if the book imbalance agrees in sign with the side (no dead zone; a missing or stale
+snapshot, > 120 s, means no trade). Everything else in A is unchanged. `research/book_vote_A.py`,
+`reports/A_book_vote.csv`; shared code `polybtc/bookdepth.py`; `CFG_AB` in `final_report_data.py` / `oos_month.py`.
+
+| period | frozen A: n / win / ¢ per share / $ at $100 | A + book vote: n / win / ¢ / $ |
+|---|---|---|
+| June (unseen) | 530 / 63.6 % / +4.2 / 4,500 | 326 / **65.6 %** / +6.1 / 3,960 |
+| July (unseen) | 1,002 / 62.0 % / +2.9 / 5,760 | 594 / **65.2 %** / +5.6 / 6,630 |
+| Aug 1–19 | 975 / 60.9 % / +2.0 / — | 446 / **62.8 %** / +3.7 / — |
+| tune Aug 20–Sep 30 | 1,303 / 62.2 % / +3.1 / 7,960 | 847 / **63.8 %** / +4.3 / 7,310 |
+| test Oct 1–Nov 3 | 1,323 / 64.3 % / +4.7 / 12,370 | 683 / **65.3 %** / +5.5 / 7,520 |
+| Nov 4–7 (unseen) | 109 / 59.6 % / +0.7 / 150 | 64 / **65.6 %** / +5.8 / 740 |
+
+Win rate and edge per trade are higher in all six periods; the trades removed (the disagreeing ~40 %) still average
++1.3 / −1.1 / +0.7 / +4.0 / −6.6 ¢ (Jun / Jul / tune / test / Nov 4–7), so at a fixed $100 stake the vote gives
+up part of the dollar total on test while raising the win rate everywhere. Lowering the m2 threshold to 0.03–0.04 to
+recover the trade count does not keep the gain (tune 61.6–61.8 %). Robust to a 60-s older snapshot (win 64.9 / 65.0 /
+63.8 / 66.2 / 63.5 %) and to the 0.2 % and 1–0.2 % bands (`reports/A_book_vote.csv`), weaker at 2–5 %.
+
+**Live path.** `polybtc/bookdepth.BookFeed` polls a REST depth endpoint every 5 s and keeps the latest imbalance; the
+trader logs `book_imb`, `book_age`, `book_agree` with every A decision (`forecasts.jsonl`) and every snapshot to
+`paper/book.jsonl`. `BOOK_VOTE=0` (default) only logs; `BOOK_VOTE=1` gates A's trades. Two things must be checked on the
+box before gating, because they cannot be checked from this container (Binance's main API answers HTTP 451 to US hosts):
+1. `BOOK_FEED=binance_perp` (`fapi.binance.com /fapi/v1/depth limit=1000`) needs a non-US host, and the 1,000 levels
+   must span ≥ 1 % of mid on both sides (the feed logs `span_ok`; a snapshot that does not reach 1 % is treated as missing).
+   If they do not, use the 0.2 % band (`bookdepth.LEVEL`), which also passes in every period except June.
+2. On a US host the fallback is the spot book mirror (`BOOK_FEED=binance_spot`, data-api.binance.vision, 5,000 levels).
+   The spot imbalance was NOT tested against the outcome (no spot book archive); run it in shadow for a few days and
+   compare `book.jsonl` with the perp archive's snapshots of the same day (`scripts/fetch_extra_feeds.py <day> <day>
+   --only binance`) before letting it gate.

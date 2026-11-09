@@ -30,6 +30,8 @@ echo "== start the paper trader (auto-restart loop, logs in /home/user/paper/, o
 export PAPER_DIR=/home/user/paper; mkdir -p $PAPER_DIR
 cd /home/user/polybtcmodel
 for pid in $(ps -eo pid,cmd | awk '/[p]aper_trader.py/ {print $1}'); do kill $pid; done; sleep 2    # one trader only
+export BOOK_FEED=${BOOK_FEED:-binance_perp} BOOK_VOTE=${BOOK_VOTE:-0}   # book-depth vote for A (polybtc/bookdepth.py): binance_perp needs a non-US host; BOOK_VOTE=1 gates trades, 0 = shadow log only
+curl -sS -m 10 -o /dev/null -w "fapi.binance.com depth -> HTTP %{http_code} (451 = US host: use BOOK_FEED=binance_spot and keep BOOK_VOTE=0 until validated)\n" "https://fapi.binance.com/fapi/v1/depth?symbol=BTCUSDT&limit=5" || true
 export PERP_FEED=${PERP_FEED:-okx}     # PERP_FEED=binance (stream) or binance_rest (polling) on a non-US host; okx otherwise
 export LIVE=${LIVE:-0} DRY_RUN=${DRY_RUN:-1} STAKE_USD=${STAKE_USD:-10} MAX_OPEN=${MAX_OPEN:-4} DAILY_LOSS_LIMIT=${DAILY_LOSS_LIMIT:--100}   # LIVE=1 DRY_RUN=0 + POLYMARKET_* keys = real orders
 if [ "$LIVE" = "1" ] && [ "$DRY_RUN" = "0" ]; then

@@ -527,6 +527,9 @@ class Trader:
         threading.Thread(target=eth_ws, args=(self.tl, self.stop), daemon=True).start()
         from bp_live import BPLive
         self.bp = BPLive(); self.bp_z = {}
+        import bookdepth; self.book_vote = os.environ.get("BOOK_VOTE", "0") == "1"      # 1: the book vote gates A's trades; 0: logged only (shadow)
+        self.book = bookdepth.BookFeed(os.environ.get("BOOK_FEED", "binance_perp"), poll=5.0, record=os.path.join(PAPER, "book.jsonl"), log=log)
+        log(f"book feed {self.book.source} ({'GATES A' if self.book_vote else 'shadow: logged, not gating'})")
         self.model = Model(self.tl); self.feeds = {}; self.pending = []; self.positions = []; self.done = set()
         self.ftrade = open(os.path.join(PAPER, "paper_trades.jsonl"), "a"); self.ffc = open(os.path.join(PAPER, "forecasts.jsonl"), "a")
         self.forder = open(os.path.join(PAPER, "orders.jsonl"), "a")
@@ -667,12 +670,14 @@ class Trader:
                     feed = self.feed_for(T); mkt, _ = feed.last_up() if feed else (np.nan, None)
                     z5 = self.bp_z.get(T, {}).get("s5", np.nan)
                     agree = bool(np.isfinite(z5) and np.sign(z5) == np.sign(p - 0.5))
+                    bk = self.book.latest(max_age=120); imb = bk["imb"] if bk else np.nan; bk_age = bk["age"] if bk else None
+                    book_agree = bool(np.isfinite(imb) and np.sign(imb) == np.sign(p - 0.5))      # third vote (polybtc/bookdepth.py); gates only with BOOK_VOTE=1
                     plausible = bool(np.isfinite(fc.get("p0", np.nan)) and np.isfinite(p) and 0.05 < p < 0.95)
-                    action = "skip" if not plausible else ("BUY " + ("UP" if p > 0.5 else "DOWN") if abs(p - 0.5) >= CFG_A["thr"] and feed is not None and agree else "none")
-                    self.ffc.write(json.dumps(dict(strategy="A", T=T, ts=round(time.time(), 2), market=mkt, z_s5=z5, agree=agree, action=action, **self.lat(T - 43.5, feed, T - 46), **fc)) + "\n"); self.ffc.flush()
+                    action = "skip" if not plausible else ("BUY " + ("UP" if p > 0.5 else "DOWN") if abs(p - 0.5) >= CFG_A["thr"] and feed is not None and agree and (book_agree or not self.book_vote) else "none")
+                    self.ffc.write(json.dumps(dict(strategy="A", T=T, ts=round(time.time(), 2), market=mkt, z_s5=z5, agree=agree, book_imb=imb, book_age=bk_age, book_agree=book_agree, book_gates=self.book_vote, action=action, **self.lat(T - 43.5, feed, T - 46), **fc)) + "\n"); self.ffc.flush()
                     if not plausible:
                         log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} SKIP: implausible forecast (p0={fc.get('p0')}, p={p}) - data gap?"); continue
-                    log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} p_close={p:.3f} bp_z5={z5:+.3f} agree={agree} market={mkt:.3f} ({fc['compute_s']}s)")
+                    log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} p_close={p:.3f} bp_z5={z5:+.3f} agree={agree} book_imb={imb:+.3f} book_agree={book_agree} market={mkt:.3f} ({fc['compute_s']}s)")
                     if action.startswith("BUY"):
                         side = action[4:]
                         self.positions.append(Position("A", T, side, CFG_A["entry"], int((T - 45) * 1000), CFG_A, p, mkt)); log(f"[A] BUY {side} @0.50 (assumed pre-open fill)")
