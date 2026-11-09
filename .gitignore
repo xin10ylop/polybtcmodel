@@ -4,3 +4,4 @@ __pycache__/
 data/
 
 .claude/settings.local.json
+exports/kronos_emb.parquet
