@@ -9,6 +9,9 @@ from datetime import date, timedelta
 OUT = "/home/user/data/extra"; TMP = os.environ.get("TMPDIR", "/tmp/claude-0/-home-user/543a293e-08d9-5eff-abf0-cbf9b740975e/scratchpad/dl")
 os.makedirs(TMP, exist_ok=True)
 
+PID = os.getpid()
+def epoch_s(x): return (pd.to_datetime(x).astype("datetime64[ns]").astype("int64") // 10**9).values
+
 def get(url, dst):
     r = subprocess.run(["curl", "-sS", "-f", "-o", dst, url], capture_output=True, text=True)
     if r.returncode: raise RuntimeError(f"{url}: {r.stderr.strip()[:200]}")
@@ -26,20 +29,28 @@ def last_price(sec, price):
 def bybit(d):
     f = f"{OUT}/bybit1s/{d}.parquet"
     if os.path.exists(f): return
-    raw = f"{TMP}/bybit_{d}.csv.gz"; get(f"https://public.bybit.com/trading/BTCUSDT/BTCUSDT{d}.csv.gz", raw)
+    raw = f"{TMP}/bybit_{PID}_{d}.csv.gz"; get(f"https://public.bybit.com/trading/BTCUSDT/BTCUSDT{d}.csv.gz", raw)
     t = pd.read_csv(raw, usecols=["timestamp", "side", "size", "price"], dtype={"timestamp": np.float64, "size": np.float64, "price": np.float64})
     os.remove(raw); day0 = int(pd.Timestamp(d).timestamp())
     buy, sell, cnt, sec = bars_1s(t.timestamp.values, t.side.values == "Buy", t["size"].values, day0)
     close = last_price(sec, t.price.values[(np.floor(t.timestamp.values).astype(np.int64) - day0 >= 0) & (np.floor(t.timestamp.values).astype(np.int64) - day0 < 86400)])
     pd.DataFrame({"close": close, "buy": buy, "sell": sell, "cnt": cnt}).to_parquet(f)
 
+def okx_file(d):
+    """OKX daily files cover 00:00-24:00 UTC+8; cached per process so consecutive UTC days download each file once."""
+    raw = f"{TMP}/okx_{PID}_{d}.zip"; dd = d.replace("-", "")
+    if not os.path.exists(raw): get(f"https://www.okx.com/cdn/okex/traderecords/trades/daily/{dd}/BTC-USDT-SWAP-trades-{d}.zip", raw)
+    with zipfile.ZipFile(raw) as z: return pd.read_csv(z.open(z.namelist()[0]), usecols=["side", "price", "size", "created_time"])
+
 def okx(d):
     f = f"{OUT}/okx1s/{d}.parquet"
     if os.path.exists(f): return
-    raw = f"{TMP}/okx_{d}.zip"; dd = d.replace("-", "")
-    get(f"https://www.okx.com/cdn/okex/traderecords/trades/daily/{dd}/BTC-USDT-SWAP-trades-{d}.zip", raw)
-    with zipfile.ZipFile(raw) as z: t = pd.read_csv(z.open(z.namelist()[0]), usecols=["side", "price", "size", "created_time"])
-    os.remove(raw); day0 = int(pd.Timestamp(d).timestamp()); ts = t.created_time.values / 1000.0
+    nxt = (date.fromisoformat(d) + timedelta(days=1)).isoformat()
+    t = pd.concat([okx_file(d), okx_file(nxt)], ignore_index=True)
+    prev = f"{TMP}/okx_{PID}_{(date.fromisoformat(d) - timedelta(days=1)).isoformat()}.zip"
+    for old in (f"{TMP}/okx_{PID}_{d}.zip", prev):
+        if os.path.exists(old): os.remove(old)
+    day0 = int(pd.Timestamp(d).timestamp()); ts = t.created_time.values / 1000.0
     buy, sell, cnt, sec = bars_1s(ts, t.side.values == "buy", t["size"].values * 0.01, day0)
     ok = (np.floor(ts).astype(np.int64) - day0 >= 0) & (np.floor(ts).astype(np.int64) - day0 < 86400)
     close = last_price(sec, t.price.values[ok])
@@ -49,14 +60,14 @@ def binance(d):
     for kind, sub in (("bookDepth", "bookdepth"), ("metrics", "metrics")):
         f = f"{OUT}/{sub}/{d}.parquet"
         if os.path.exists(f): continue
-        raw = f"{TMP}/{kind}_{d}.zip"; get(f"https://data.binance.vision/data/futures/um/daily/{kind}/BTCUSDT/BTCUSDT-{kind}-{d}.zip", raw)
+        raw = f"{TMP}/{kind}_{PID}_{d}.zip"; get(f"https://data.binance.vision/data/futures/um/daily/{kind}/BTCUSDT/BTCUSDT-{kind}-{d}.zip", raw)
         with zipfile.ZipFile(raw) as z: t = pd.read_csv(z.open(z.namelist()[0]))
         os.remove(raw)
         if kind == "bookDepth":
-            t["ts"] = pd.to_datetime(t.timestamp).astype("int64") // 10**9
+            t["ts"] = epoch_s(t.timestamp)
             t = t.pivot_table(index="ts", columns="percentage", values="notional", aggfunc="last"); t.columns = [f"n{c:+.1f}" for c in t.columns]
         else:
-            t["ts"] = pd.to_datetime(t.create_time).astype("int64") // 10**9; t = t.set_index("ts").drop(columns=["symbol", "create_time"])
+            t["ts"] = epoch_s(t.create_time); t = t.set_index("ts").drop(columns=["symbol", "create_time"])
         t.to_parquet(f)
 
 if __name__ == "__main__":
