@@ -24,7 +24,7 @@ for DEC in [int(a) for a in sys.argv[1:]]:
     x = D.x_twap.values; A = np.column_stack([np.ones(len(D)), D["lrv_300"].values, D["lrv_3600"].values]); coef = np.linalg.lstsq(A, np.log(np.abs(x) + 0.3), rcond=None)[0]; z = np.clip(x / np.exp(A @ coef), -4, 4)
     b = lgb.train(dict(objective="huber", alpha=1.5, learning_rate=0.02, num_leaves=15, min_data_in_leaf=400, feature_fraction=0.5, bagging_fraction=0.7, bagging_freq=1, lambda_l2=50.0, max_bin=63, verbose=-1, num_threads=3, seed=1),
                   lgb.Dataset(D[FEATS].values.astype(np.float32), z), num_boost_round=300)
-    oos = pd.read_parquet(f"{DEEP}/ourcase_{ASSET}_{dtag}{('ph5book' if DEC == -45 else 'ph3book') if BOOK else 'ph5'}.parquet"); a = np.abs(oos[oos.ym >= "2026-08"]["lgb_reg300"].dropna().values)
+    oos = pd.read_parquet(f"{DEEP}/ourcase_{ASSET}_{dtag}{('ph5book' if DEC == -45 else 'ph3book') if BOOK else ('ph5' if DEC == -45 else 'ph3')}.parquet"); a = np.abs(oos[oos.ym >= "2026-08"]["lgb_reg300"].dropna().values)
     meta = dict(asset=ASSET, decision_offset=DEC, rows=int(len(D)), phases=sorted(int(p) for p in D.phase.unique()), trained_through=str(pd.to_datetime(D["T"].max(), unit="s")), features=FEATS, scale_coef=[float(c) for c in coef],
                 tier_abs_score={"top5": float(np.quantile(a, 0.95)), "top15": float(np.quantile(a, 0.85)), "top30": float(np.quantile(a, 0.70))}, tier_source="walk-forward OOS scores 2026-08..2026-11",
                 params="lgb huber 300 rounds, lr 0.02, 15 leaves, min_data 400, ff 0.5, bag 0.7, l2 50")

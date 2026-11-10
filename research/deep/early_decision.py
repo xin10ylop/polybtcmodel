@@ -3,7 +3,7 @@ decision, taken when it would cross, kept until `cancel`; sell 0.85 after the fi
 import sys, os, glob, pickle, numpy as np, pandas as pd, warnings; warnings.filterwarnings("ignore")
 sys.path.insert(0, "/home/user/polybtcmodel/research/deep"); from common import load, sims_cached, DEEP
 MONTHS = ["Jun", "Jul", "Aug", "Sep", "Oct", "Nov"]; ASSET = "BTC"; TCS = [-75, -60, -45, -30, -15, 0]; CACHE = f"{DEEP}/early_decision_{ASSET}.pkl"
-FILES = {-120: "ourcase_BTC_d-120_ph3book", -90: "ourcase_BTC_d-90_ph3book", -60: "ourcase_BTC_d-60_ph3book", -45: "ourcase_BTC_ph5"}
+FILES = {-121: "ourcase_BTC_d-120_ph3", -120: "ourcase_BTC_d-120_ph3book", -90: "ourcase_BTC_d-90_ph3book", -60: "ourcase_BTC_d-60_ph3book", -45: "ourcase_BTC_ph5"}
 W = load(ASSET, ["m2_-45_close_p"]); mon = W.month.values; n = len(W); SN = sims_cached(ASSET, None).reindex(W.index); upwin = SN.pnl_up.values > 0; ok = np.isfinite(SN.pnl_up.values)
 def before(mo): return np.isin(mon, MONTHS[:MONTHS.index(mo)]) if mo not in ("Jun", "Jul") else np.isin(mon, ["Aug", "Sep", "Oct", "Nov"])
 SIG = {}
@@ -23,7 +23,7 @@ else:
             rel = g.rel.values; pr = g.price.values; o0 = g.outcome_index.values == 0; buy = g.side.values == "BUY"
             for dec in FILES:
                 if w not in SIG[dec].index: continue
-                s = SIG[dec].at[w, "s"]; ours = o0 if s == 0 else ~o0; ps = np.where(ours, pr, 1 - pr); lift = (ours & buy) | (~ours & ~buy); t_in = dec + 2
+                s = SIG[dec].at[w, "s"]; ours = o0 if s == 0 else ~o0; ps = np.where(ours, pr, 1 - pr); lift = (ours & buy) | (~ours & ~buy); t_in = max(dec, -120) + 2      # key -121 = the T-120 model WITHOUT book inputs (the one the bot can run)
                 a = lift & (rel < t_in) & (rel >= t_in - 60); b = lift & (rel >= t_in) & (rel < t_in + 8); a0 = ps[a][-1] if a.any() else (ps[b][0] if b.any() else np.nan)
                 hit = ~lift & (ps <= 0.50 + 1e-9) & (rel >= t_in); ft = rel[hit].min() if hit.any() else np.nan
                 q1 = lift & (rel > (ft if np.isfinite(ft) else 1e9)); q2 = lift & (rel > t_in)
