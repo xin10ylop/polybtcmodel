@@ -40,23 +40,28 @@ def offer(rel, ps, lift, t):
     a = lift & (rel < t) & (rel >= t - 60)
     if a.any(): return ps[a][-1]
     b = lift & (rel >= t) & (rel < t + 8); return ps[b][0] if b.any() else np.nan
-def simulate(w, s, stages, take, s45):
+def simulate(w, s, stages, take, s45, cross="take", fresh=60, queue=0.0):
     """-> (entry, fee, fill time, $ volume at our price, kind) or None.  stages: [(t0, t1, bid)], take: (time, cap) or None,
     s45: None or dict(cancel=bool, take_cap=float or None, agree=bool, strong=bool) applied at T-43."""
     rel, ps, lift, usd, mxpost = side_view(w, s)
     def taker(t, cap):
         a = offer(rel, ps, lift, t)
-        if np.isfinite(a) and a <= cap + 1e-9:
+        if fresh < 60 and not (lift & (ps <= cap + 1e-6) & (rel >= t - fresh) & (rel < t + fresh)).any(): a = np.nan      # audit option: a cross needs fresh evidence (a market buy at <= cap within +-fresh s)
+        if np.isfinite(a) and a <= cap + 1e-6:
             q = lift & (ps <= cap + 1e-9) & (rel >= t - 2) & (rel < t + 8); return (float(a), 0.07 * a * (1 - a), t, max(float(usd[q].sum()), 5.0), "taker")
         return None
     cut = 1e9
     if s45 is not None and s45["cancel"] and not s45["agree"]: cut = -43
     for (t0, t1, bid) in stages:
         if t0 >= cut: break
-        t1 = min(t1, cut); r = taker(t0, bid)
-        if r: return r
-        hit = ~lift & (ps <= bid + 1e-9) & (rel >= t0) & (rel < t1)
-        if hit.any(): return (bid, 0.0, float(rel[hit].min()), float(usd[hit].sum()), "maker")
+        t1 = min(t1, cut); r = taker(t0, bid) if cross != "rest" else None
+        if r: return r if cross == "take" else None            # cross: "take" = pay the offer + fee, "skip" = post-only refused and no order, "rest" = the bid rests anyway (audit)
+        hit = ~lift & (ps <= bid + 1e-6) & (rel >= t0) & (rel < t1)
+        if hit.any():
+            if queue <= 0: return (bid, 0.0, float(rel[hit].min()), float(usd[hit].sum()), "maker")
+            # audit option (queue position): filled only once a print trades THROUGH our price or `queue` dollars have traded at it
+            j = np.flatnonzero(hit); cum = np.cumsum(usd[j]); okq = (ps[j] < bid - 1e-6) | (cum >= queue)
+            if okq.any(): k = j[np.argmax(okq)]; return (bid, 0.0, float(rel[k]), float(usd[hit].sum()), "maker")
         if s45 is not None and s45.get("take_cap") and t0 < -43 <= t1 and s45["agree"] and s45["strong"]:      # (only checked when a stage spans T-43)
             pass
     if s45 is not None and s45.get("take_cap") and s45["agree"] and s45["strong"] and cut > -43:
@@ -64,7 +69,7 @@ def simulate(w, s, stages, take, s45):
         pass
     if take is not None and take[0] < cut: return taker(take[0], take[1])
     return None
-def run(dec=-120, tier=0.85, stages=((-118, -15, 0.50),), take=None, confirm=None, tp=0.85):
+def run(dec=-120, tier=0.85, stages=((-118, -15, 0.50),), take=None, confirm=None, tp=0.85, cross="take", fresh=60, queue=0.0, tp_through=False):
     sc = SC[dec]; sel = ok & np.isfinite(sc) & (np.abs(sc) >= THR[dec, tier]); idx = np.flatnonzero(sel); out = []
     for i in idx:
         w = Tix[i]
@@ -75,10 +80,11 @@ def run(dec=-120, tier=0.85, stages=((-118, -15, 0.50),), take=None, confirm=Non
             s45 = dict(cancel=confirm.get("cancel", False), agree=agree)
             if confirm.get("take_cap") is not None:      # strong agreement at T-43: stop resting, take the offer up to the cap
                 if agree and strong: stg = [(t0, min(t1, -43), b) for (t0, t1, b) in stg if t0 < -43]; tk = (-43, confirm["take_cap"])
-        r = simulate(w, s, stg, tk, s45)
+        r = simulate(w, s, stg, tk, s45, cross, fresh, queue)
         if r is None: continue
         e, fee, ft, vol, kind = r; rel, ps, lift, usd, mxpost = side_view(w, s); q = lift & (rel > ft); mx = max(float(ps[q].max()) if q.any() else 0.0, mxpost)
-        win = upwin[i] if s == 0 else not upwin[i]; v = ((tp - e) if (tp is not None and mx >= tp - 1e-9) else ((1 - e) if win else -e)) - fee
+        win = upwin[i] if s == 0 else not upwin[i]; hit_tp = tp is not None and (mx > tp + 1e-6 if tp_through else mx >= tp - 1e-6)      # 1e-6: prints are stored as float32
+        v = ((tp - e) if hit_tp else ((1 - e) if win else -e)) - fee
         out.append((i, v, e, min(STAKE, vol), kind == "taker"))
     o = np.array(out, dtype=float); return dict(i=o[:, 0].astype(int), v=o[:, 1], e=o[:, 2], cap=o[:, 3], tk=o[:, 4] > 0, nsig=len(idx))
 PER = {"Jun1-Aug19": date < "2026-08-20", "tune": (date >= "2026-08-20") & (date <= "2026-09-30"), "TEST": date >= "2026-10-01", "ALL": np.ones(n, bool)}
