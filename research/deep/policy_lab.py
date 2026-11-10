@@ -77,6 +77,7 @@ def run(dec=-120, tier=0.85, stages=((-118, -15, 0.50),), take=None, confirm=Non
         s = 0 if sc[i] > 0 else 1; s45 = None; stg = list(stages); tk = take
         if confirm is not None:
             a = SC[-45][i]; agree = bool(np.isfinite(a) and (a > 0) == (sc[i] > 0)); strong = bool(np.isfinite(a) and abs(a) >= THR[-45, confirm.get("q", 0.85)][i])
+            if confirm.get("need_strong"): agree = agree and strong      # keep the bid only when the T-45 model agrees AND is itself in its top tier
             s45 = dict(cancel=confirm.get("cancel", False), agree=agree)
             if confirm.get("take_cap") is not None:      # strong agreement at T-43: stop resting, take the offer up to the cap
                 if agree and strong: stg = [(t0, min(t1, -43), b) for (t0, t1, b) in stg if t0 < -43]; tk = (-43, confirm["take_cap"])
@@ -85,8 +86,9 @@ def run(dec=-120, tier=0.85, stages=((-118, -15, 0.50),), take=None, confirm=Non
         e, fee, ft, vol, kind = r; rel, ps, lift, usd, mxpost = side_view(w, s); q = lift & (rel > ft); mx = max(float(ps[q].max()) if q.any() else 0.0, mxpost)
         win = upwin[i] if s == 0 else not upwin[i]; hit_tp = tp is not None and (mx > tp + 1e-6 if tp_through else mx >= tp - 1e-6)      # 1e-6: prints are stored as float32
         v = ((tp - e) if hit_tp else ((1 - e) if win else -e)) - fee
-        out.append((i, v, e, min(STAKE, vol), kind == "taker"))
-    o = np.array(out, dtype=float); return dict(i=o[:, 0].astype(int), v=o[:, 1], e=o[:, 2], cap=o[:, 3], tk=o[:, 4] > 0, nsig=len(idx))
+        t_in = stg[0][0] if stg else (tk[0] if tk else np.nan); a0 = offer(rel, ps, lift, t_in) if np.isfinite(t_in) else np.nan
+        out.append((i, v, e, min(STAKE, vol), kind == "taker", ft, a0, abs(sc[i]) / THR[dec, tier][i]))
+    o = np.array(out, dtype=float); return dict(i=o[:, 0].astype(int), v=o[:, 1], e=o[:, 2], cap=o[:, 3], tk=o[:, 4] > 0, ft=o[:, 5], a0=o[:, 6], rel_score=o[:, 7], nsig=len(idx))
 PER = {"Jun1-Aug19": date < "2026-08-20", "tune": (date >= "2026-08-20") & (date <= "2026-09-30"), "TEST": date >= "2026-10-01", "ALL": np.ones(n, bool)}
 TABLE = float(np.nansum(np.where(SC[-45] > 0, S85.pnl_up.values, S85.pnl_dn.values)[ok & np.isfinite(SC[-45]) & (np.abs(SC[-45]) >= THR[-45, 0.85])]) * 200)
 def summ(r, per="ALL"):
