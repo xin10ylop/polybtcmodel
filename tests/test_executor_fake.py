@@ -8,17 +8,21 @@ TPX = LE.CFG_TP["A"]
 
 class Fake:
     """Shared fake exchange."""
-    book = {}; n = 0; reject_sells = 0; crossing = False; fail_next = None; redeemed = []; cancel_all_calls = 0
+    book = {}; n = 0; reject_sells = 0; crossing = False; fail_next = None; refuse_cancel = 0; ghost = None; redeemed = []; cancel_all_calls = 0
     def __init__(self): pass
     def limit(self, token, side, price, size, post_only=False):
+        if Fake.ghost:      # the exchange accepts the order but the answer is lost (timeout): the order exists, the caller sees an error
+            Fake.n += 1; Fake.book[f"o{Fake.n}"] = dict(token=token, side=side, price=price, size=size, matched=0.0, status="live"); m = Fake.ghost; Fake.ghost = None; raise TimeoutError(m)
         if Fake.fail_next: m = Fake.fail_next; Fake.fail_next = None; raise RuntimeError(m)
         if post_only and Fake.crossing: raise RuntimeError("invalid post-only order: order crosses book")
         if side == "SELL" and Fake.reject_sells > 0: Fake.reject_sells -= 1; raise RuntimeError("order rejected: not_enough_balance")
         Fake.n += 1; oid = f"o{Fake.n}"; Fake.book[oid] = dict(token=token, side=side, price=price, size=size, matched=0.0, status="live"); return dict(order_id=oid, status="live", trade_ids=[])
     def cancel(self, oid):
+        if Fake.refuse_cancel > 0: Fake.refuse_cancel -= 1; raise RuntimeError("cancel refused: busy")
         o = Fake.book[oid]
         if o["status"] == "live": o["status"] = "canceled"
         return True
+    def open_orders(self, token): return [k for k, o in Fake.book.items() if o["token"] == token and o["status"] == "live"]
     def cancel_all(self): Fake.cancel_all_calls += 1; [self.cancel(k) for k in Fake.book]; return True
     def status(self, oid): o = Fake.book[oid]; return o["status"], o["matched"]
     def redeem(self, cond): Fake.redeemed.append(cond); return "0xtx"
@@ -75,6 +79,14 @@ check("crossing bid with ALLOW_TAKER=1: exactly one plain limit at 0.50, flagged
 fill(r1, 10); poll(ex, time.time()); pk = ex.positions[("A", TK)]; check("taker fill books the fee", abs(pk["pnl"] + LE.taker_fee(0.50, 10)) < 1e-9, f"pnl {pk['pnl']:.4f}")
 Fake.crossing = False; n1 = len(Fake.book); Fake.fail_next = "ReadTimeout: the request timed out"; r2 = ex.buy("A", TK + 300, "UP", 0.50, time.time() + 100, "tU2", "tD2", "ck2", TPX)
 check("a timeout on the first attempt is NOT re-sent (no duplicate order), even with ALLOW_TAKER=1", r2 is None and len(Fake.book) == n1); LE.ALLOW_TAKER = False; LE.MAX_OPEN = mo
+# refused cancel: retried until the order is off the book; lost answer on placement: the untracked order is found and cancelled
+LE.MAX_OPEN = 99; TR = T + 12000; orf = ex.buy("A", TR, "UP", 0.50, time.time() + 30, "tR", "tRd", "cr", TPX); Fake.refuse_cancel = 1; poll(ex, time.time() + 31); st1 = Fake.book[orf]["status"]
+ex.orders[orf]["cancel_ts"] -= 3; poll(ex, time.time() + 32); poll(ex, time.time() + 33)
+check("a refused cancel is retried until the bid is off the book", st1 == "live" and Fake.book[orf]["status"] == "canceled" and orf not in ex.orders, f"first {st1}, then {Fake.book[orf]['status']}")
+nb = len(Fake.book); Fake.ghost = "read timed out"; rg = ex.buy("A", TR + 300, "UP", 0.50, time.time() + 100, "tG", "tGd", "cg", TPX); gid = [k for k, o in Fake.book.items() if o["token"] == "tG"]
+for sw in ex.sweeps: sw["at"] = [time.time() - 1]
+poll(ex, time.time())
+check("placement answer lost: the order that exists untracked on the book is found and cancelled", rg is None and len(gid) == 1 and Fake.book[gid[0]]["status"] == "canceled", str([Fake.book[g] for g in gid])); LE.MAX_OPEN = 3
 # 9. risk: daily loss limit halts new trades
 ex.day_pnl = -26.0; r = ex.buy("A", T + 1800, "UP", 0.50, time.time() + 30, "a", "b", "c", TPX); check("daily loss limit stops new orders", r is None and ex.halted)
 print(f"\n{PKG}: {sum(RES)}/{len(RES)} checks passed"); sys.exit(0 if all(RES) else 1)
