@@ -1,4 +1,4 @@
-"""Live path vs research path for the new A model: the trader's own timeline (archive), Model.forecast(T, -45, 0) -> feature row -> NewA.score,
+"""Live path vs research path for the new A model: the trader's own timeline (archive), Model.row(T, -45, 0) -> feature row -> NewA.score,
 against the same booster applied to the research feature dump (scripts/dump_feats.py) for the same windows.
   python tests/test_newa_parity.py polybtc|polyeth [YYYY-MM-DD] [n_windows]"""
 import os, sys, tempfile, datetime as dt, numpy as np, pandas as pd, glob
@@ -10,7 +10,8 @@ tl = pt.LiveTimeline(T0, days=14); pt.load_archive(tl); model = pt.Model(tl); na
 D = pd.concat([pd.read_parquet(f) for f in glob.glob(f"/home/user/data/deep/feats_{ASSET}_ph0_*.parquet")]).set_index("T")
 rng = np.random.default_rng(5); Ts = sorted(int(d0.timestamp()) + 300 * int(k) for k in rng.choice(288, N, replace=False)); rows = []
 for T in Ts:
-    tl.known = (T - 44) - tl.t0_epoch; model.regime(T, -45, 0); model.forecast(T, -45, 0); i45 = (T - 45) - tl.t0_epoch      # bar T-45 is final: its open is the reference price of the feature row, as in the research dump
+    tl.known = (T - 52) - tl.t0_epoch; tl.last_spot_sec = T - 52; model.regime(T, -45, 0)      # regime block precomputed at T-52, as live
+    tl.known = (T - 45) - tl.t0_epoch; tl.last_spot_sec = T - 45; model.row(T, -45, 0); i45 = (T - 45) - tl.t0_epoch      # decision: bars through T-46 final + the spot kline of second T-45 (its open is the row's reference price)
     s_live, d_live = na.score(model.last_X, tl.view("s_close", i45 - 15, i45)); r = D.loc[T]; s_ref = float(na.booster.predict(np.array([[float(r[f]) for f in na.feats]], dtype=np.float32))[0])
     worst = max(na.feats, key=lambda f: abs((d_live if f == "f_disp15" else float(model.last_X[f].values[0])) - float(r[f])) / (abs(float(r[f])) + 1e-3))
     rows.append((s_live, s_ref, d_live, float(r["f_disp15"]), worst))
