@@ -8,9 +8,11 @@ TPX = LE.CFG_TP["A"]
 
 class Fake:
     """Shared fake exchange."""
-    book = {}; n = 0; reject_sells = 0; redeemed = []; cancel_all_calls = 0
+    book = {}; n = 0; reject_sells = 0; crossing = False; fail_next = None; redeemed = []; cancel_all_calls = 0
     def __init__(self): pass
     def limit(self, token, side, price, size, post_only=False):
+        if Fake.fail_next: m = Fake.fail_next; Fake.fail_next = None; raise RuntimeError(m)
+        if post_only and Fake.crossing: raise RuntimeError("invalid post-only order: order crosses book")
         if side == "SELL" and Fake.reject_sells > 0: Fake.reject_sells -= 1; raise RuntimeError("order rejected: not_enough_balance")
         Fake.n += 1; oid = f"o{Fake.n}"; Fake.book[oid] = dict(token=token, side=side, price=price, size=size, matched=0.0, status="live"); return dict(order_id=oid, status="live", trade_ids=[])
     def cancel(self, oid):
@@ -65,6 +67,14 @@ exq = ex; TQ = T + 6000; oq = exq.buy("A", TQ, "UP", 0.50, time.time() + 100, "t
 check("cancel_now withdraws the resting bid long before its deadline, no position", Fake.book[oq]["status"] == "canceled" and oq not in exq.orders and ("A", TQ) not in exq.positions)
 TQ2 = TQ + 300; oq = exq.buy("A", TQ2, "DOWN", 0.50, time.time() + 100, "tokUq2", "tokDq2", "condq2", TPX); fill(oq, 6); poll(exq, time.time()); exq.cancel_now("A", TQ2); poll(exq, time.time()); poll(exq, time.time() + 1); pq = exq.positions.get(("A", TQ2))
 check("cancel_now after a partial fill: the rest is cancelled, the 6 filled shares keep their sell order", Fake.book[oq]["status"] == "canceled" and pq is not None and pq["size"] == 6 and len(pq["sell_orders"]) == 1, str(pq))
+# ALLOW_TAKER: a post-only bid refused as crossing is re-sent once as a plain limit; any other failure is never re-sent (no duplicate order)
+TK = T + 9000; n0 = len(Fake.book); Fake.crossing = True; LE.ALLOW_TAKER = False; mo = LE.MAX_OPEN; LE.MAX_OPEN = 99; r0 = ex.buy("A", TK, "UP", 0.50, time.time() + 100, "tU", "tD", "ck", TPX)
+check("crossing bid with ALLOW_TAKER=0: nothing placed", r0 is None and len(Fake.book) == n0)
+LE.ALLOW_TAKER = True; r1 = ex.buy("A", TK, "UP", 0.50, time.time() + 100, "tU", "tD", "ck", TPX)
+check("crossing bid with ALLOW_TAKER=1: exactly one plain limit at 0.50, flagged taker", r1 is not None and len(Fake.book) == n0 + 1 and Fake.book[r1]["price"] == 0.50 and ex.orders[r1]["taker"] is True)
+fill(r1, 10); poll(ex, time.time()); pk = ex.positions[("A", TK)]; check("taker fill books the fee", abs(pk["pnl"] + LE.taker_fee(0.50, 10)) < 1e-9, f"pnl {pk['pnl']:.4f}")
+Fake.crossing = False; n1 = len(Fake.book); Fake.fail_next = "ReadTimeout: the request timed out"; r2 = ex.buy("A", TK + 300, "UP", 0.50, time.time() + 100, "tU2", "tD2", "ck2", TPX)
+check("a timeout on the first attempt is NOT re-sent (no duplicate order), even with ALLOW_TAKER=1", r2 is None and len(Fake.book) == n1); LE.ALLOW_TAKER = False; LE.MAX_OPEN = mo
 # 9. risk: daily loss limit halts new trades
 ex.day_pnl = -26.0; r = ex.buy("A", T + 1800, "UP", 0.50, time.time() + 30, "a", "b", "c", TPX); check("daily loss limit stops new orders", r is None and ex.halted)
 print(f"\n{PKG}: {sum(RES)}/{len(RES)} checks passed"); sys.exit(0 if all(RES) else 1)
