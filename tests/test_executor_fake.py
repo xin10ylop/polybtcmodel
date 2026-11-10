@@ -60,6 +60,11 @@ check("restart: today's realised P&L restored", abs(ex.day_pnl - day_before) < 1
 # 8. shutdown from inside the lock (SIGTERM during poll) must not deadlock and cancels only own orders
 with ex.lock: ex.shutdown()
 check("shutdown inside the lock returns and cancels own orders only", Fake.book[other]["status"] == "live" and all(Fake.book[k]["status"] != "live" for k in ex.orders))
+# cancel_now: the trader withdraws a resting bid before its deadline (T-45 model disagrees with an earlier decision); a filled part keeps its sell
+exq = ex; TQ = T + 6000; oq = exq.buy("A", TQ, "UP", 0.50, time.time() + 100, "tokUq", "tokDq", "condq", TPX); poll(exq, time.time()); exq.cancel_now("A", TQ); poll(exq, time.time()); poll(exq, time.time() + 1)
+check("cancel_now withdraws the resting bid long before its deadline, no position", Fake.book[oq]["status"] == "canceled" and oq not in exq.orders and ("A", TQ) not in exq.positions)
+TQ2 = TQ + 300; oq = exq.buy("A", TQ2, "DOWN", 0.50, time.time() + 100, "tokUq2", "tokDq2", "condq2", TPX); fill(oq, 6); poll(exq, time.time()); exq.cancel_now("A", TQ2); poll(exq, time.time()); poll(exq, time.time() + 1); pq = exq.positions.get(("A", TQ2))
+check("cancel_now after a partial fill: the rest is cancelled, the 6 filled shares keep their sell order", Fake.book[oq]["status"] == "canceled" and pq is not None and pq["size"] == 6 and len(pq["sell_orders"]) == 1, str(pq))
 # 9. risk: daily loss limit halts new trades
 ex.day_pnl = -26.0; r = ex.buy("A", T + 1800, "UP", 0.50, time.time() + 30, "a", "b", "c", TPX); check("daily loss limit stops new orders", r is None and ex.halted)
 print(f"\n{PKG}: {sum(RES)}/{len(RES)} checks passed"); sys.exit(0 if all(RES) else 1)
