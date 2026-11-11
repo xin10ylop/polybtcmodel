@@ -42,12 +42,15 @@ V = {   # name: features, objective, extra lgb params, rounds, sample-weight hal
  "metrics":   dict(f=BASE + MET, obj="reg", p={}, r=(300,), hl=None, seeds=(0,)),
  "metrics_oi": dict(f=BASE + [c for c in MET if c.startswith("oi_")], obj="reg", p={}, r=(300,), hl=None, seeds=(0,)),
  "metrics_ls": dict(f=BASE + [c for c in MET if not c.startswith("oi_")], obj="reg", p={}, r=(300,), hl=None, seeds=(0,)),
+ "win90":     dict(f=BASE, obj="reg", p={}, r=(300,), hl=None, seeds=(0,), win=90),     # learning curve: train only on the last N days
+ "win180":    dict(f=BASE, obj="reg", p={}, r=(300,), hl=None, seeds=(0,), win=180),
+ "win270":    dict(f=BASE, obj="reg", p={}, r=(300,), hl=None, seeds=(0,), win=270),
  "small":     dict(f=BASE, obj="reg", p=dict(num_leaves=7, min_data_in_leaf=1000), r=(300, 600), hl=None, seeds=(0,)),
 }
 for name in sys.argv[1].split(","):
     c = V[name]; X = D[c["f"]].values.astype(np.float32); P = {}; t0 = time.time()
     for mo in MONTHS:
-        m0 = int(pd.Timestamp(mo + "-01").timestamp()); tr = (Tt + 300 < m0 - 86400); te = (D.ym.values == mo) & (D.phase.values == 0)
+        m0 = int(pd.Timestamp(mo + "-01").timestamp()); tr = (Tt + 300 < m0 - 86400) & (Tt >= m0 - 86400 * c.get("win", 10**6)); te = (D.ym.values == mo) & (D.phase.values == 0)
         if tr.sum() < 20000 or te.sum() == 0: continue
         w = None if c["hl"] is None else np.exp(-(m0 - Tt[tr]) / 86400 / c["hl"] * np.log(2)).astype(np.float32)
         if c["obj"] == "reg":
