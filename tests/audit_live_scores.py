@@ -8,7 +8,8 @@ d0 = int(dt.datetime.fromisoformat(DAY + "T00:00:00+00:00").timestamp()); d1 = d
 recs = [json.loads(l) for l in open(os.path.join(LIVE, "forecasts.jsonl")) if l.strip()]; A = [r for r in recs if r.get("strategy") == "A" and d0 <= r["T"] < d1 and r.get("new_score") is not None and np.isfinite(r["new_score"])]
 C = {r["T"]: r for r in recs if r.get("strategy") == "A_conf" and d0 <= r["T"] < d1 and r.get("score45") is not None}
 if not A: print(f"no rule-A decisions with a score on {DAY} in {LIVE}/forecasts.jsonl"); sys.exit(2)
-tl = pt.LiveTimeline(d0 - 12 * 86400, days=14); pt.load_archive(tl)
+atl = pt.load_timeline(); start = max(d0 - 10 * 86400, int(atl.t0_epoch))      # the live bot starts its history 10 days back; the box keeps only about 11 days of archive
+tl = pt.LiveTimeline(start, days=14); pt.load_archive(tl)
 if tl.known + tl.t0_epoch < max(r["T"] for r in A): print(f"the archive ends {dt.datetime.fromtimestamp(tl.known + tl.t0_epoch, dt.UTC)}: it does not cover {DAY} yet (Binance publishes a day's files the next day; fetch them first)"); sys.exit(2)
 model = pt.Model(tl); NA = {}
 def na(dec):
