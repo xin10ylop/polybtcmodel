@@ -13,7 +13,7 @@ Mirrors btcmodel.predictor.Predictor.predict exactly (vectorised).  Output: /hom
 import os, sys, time
 import numpy as np, pandas as pd
 from scipy.special import logit, expit
-os.environ["BTC_DATA_DIR"] = "/home/user/data"
+os.environ["BTC_DATA_DIR"] = os.environ.get("HIST_DATA_DIR", "/home/user/data")   # HIST_DATA_DIR: separate root for older history (scripts/fetch_hist_feats.py)
 sys.path.insert(0, "/home/user/btcmovement2")
 from btcmodel.timeline import load_timeline
 from btcmodel.features import Base, FeatureEngine, W
