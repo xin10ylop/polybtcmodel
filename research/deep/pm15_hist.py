@@ -42,3 +42,21 @@ for hn, hm in (("TRADING HOURS (weekends + weekday 16-24 UTC)", True), ("ALL HOU
             cap = np.minimum(S, f.va.values); p = cap / 0.5 * np.where(w, 0.5, -0.5) + cap / 0.5 * 0.0035; g = pd.Series(p).groupby(day[j]).sum(); bs = g.values[rng.integers(0, len(g), (2000, len(g)))].sum(1)
             rows.append({"stake $": S, "fills completely %": round(100 * (cap >= S).mean()), "avg $ filled": round(cap.mean(), 1), "total $": round(p.sum()), "per day $": round(p.sum() / ND, 1), "95% lo": round(np.quantile(bs, .025)), "95% hi": round(np.quantile(bs, .975)), "max DD $": round(dd(p)), "worst day $": round(g.min()), **{m: round(p[mon[j] == m].sum()) for m in MONTHS}})
         print(pd.DataFrame(rows).to_string(index=False))
+
+# ---- taker variant: instead of resting a bid, buy what is on offer on our side before the open (T-118 .. T-15) up to a price cap, fee included
+print("\n=== TAKER before the open: buy our side when it is on offer at or below the cap (evidence: somebody else bought there), fee 0.07 p (1-p) included ===")
+for hn, hm in (("trading hours", True), ("all hours", False)):
+    rows = []
+    for cap_px in (0.50, 0.51, 0.52, 0.53, 0.55):
+        o = []
+        for j, w in enumerate(T):
+            s = s120[w]
+            if abs(s) < thr[mon[j]] or (hm and not good[j]): continue
+            sd = 0 if s > 0 else 1; won = bool(up[w]) if sd == 0 else not bool(up[w]); rel, pu, lu, usd = P.get(int(w), (np.zeros(0), np.zeros(0), np.zeros(0, bool), np.zeros(0))); po = pu if sd == 0 else 1 - pu; tb = lu if sd == 0 else ~lu
+            k = np.flatnonzero(tb & (rel >= -118) & (rel <= -15) & (po <= cap_px + 1e-6))
+            if len(k): p = float(po[k[0]]); o.append((j, won, p + 0.07 * p * (1 - p), float(usd[k].sum())))
+        o = pd.DataFrame(o, columns=["j", "won", "cost", "usd"]); nsig = int(((np.abs(s120.reindex(T).values) >= np.array([thr[m] for m in mon])) & (good if hm else True)).sum()); jj = o.j.values; pnl = 100 / o.cost * o.won - 100
+        real = np.minimum(100, o.usd) / o.cost * (o.won - o.cost); g = pd.Series(real.values).groupby(day[jj]).sum(); bs = g.values[rng.integers(0, len(g), (2000, len(g)))].sum(1); te = day[jj] >= np.datetime64("2026-10-01")
+        rows.append({"cap": f"{cap_px:.2f}", "trades/day": round(len(o) / ND, 1), "% of signals": round(100 * len(o) / nsig), "win %": round(100 * o.won.mean(), 1), "paid ¢ (with fee)": round(100 * o.cost.mean(), 1), "¢/share": round(100 * (o.won - o.cost).mean(), 2), "median $ on offer": round(o.usd.median()),
+                     "total $ at $100, real size": round(real.sum()), "per day $": round(real.sum() / ND, 1), "95% lo": round(np.quantile(bs, .025)), "95% hi": round(np.quantile(bs, .975)), "Jun1-Sep30 ¢/sh": round(100 * (o.won - o.cost)[~te].mean(), 2), "Oct1-Nov7 ¢/sh": round(100 * (o.won - o.cost)[te].mean(), 2)})
+    print(f"-- {hn}"); print(pd.DataFrame(rows).to_string(index=False))
