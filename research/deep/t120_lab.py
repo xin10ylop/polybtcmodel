@@ -26,6 +26,12 @@ for col, nm in (("sum_toptrader_long_short_ratio", "tlp"), ("count_toptrader_lon
     v = np.log(mt[col]); M[f"{nm}_rel1d"] = v - v.rolling(288, min_periods=100).median(); M[f"{nm}_d15"] = v - v.shift(3); M[f"{nm}_d60"] = v - v.shift(12)
 MET = list(M.columns); mi = M.index.values; jm = np.searchsorted(mi, D["T"].values + DEC - 330, side="right") - 1
 for c in MET: D[c] = np.where(jm >= 0, M[c].values[np.maximum(jm, 0)], np.nan).astype(np.float32)
+# RSI (14 periods, Wilder) on completed 1-minute and 5-minute Binance spot candles, as known at the decision time (the idea of a published Kalshi strategy)
+sys.path.insert(0, "/home/user/btcmovement2"); from btcmodel.timeline import load_timeline as _lt; _tl = _lt(); _t0 = int(_tl.t0_epoch); _c = pd.Series(np.asarray(_tl["s_close"], dtype=np.float64)).ffill().values
+def _rsi(close, n=14):
+    d = np.diff(close, prepend=close[0]); u = pd.Series(np.maximum(d, 0)).ewm(alpha=1 / n, adjust=False).mean().values; dn = pd.Series(np.maximum(-d, 0)).ewm(alpha=1 / n, adjust=False).mean().values; return 100 - 100 / (1 + u / np.maximum(dn, 1e-12))
+_R1 = _rsi(_c[59::60]); _R5 = _rsi(_c[299::300]); _td = D["T"].values.astype(np.int64) + DEC; _in = (_td - _t0 >= 3600) & (_td - _t0 < len(_c)); _k1 = np.clip((_td - _t0) // 60 - 1, 1, len(_R1) - 1); _k5 = np.clip((_td - _t0) // 300 - 1, 0, len(_R5) - 1)
+D["rsi1"] = np.where(_in, _R1[_k1], np.nan).astype(np.float32); D["rsi1_d"] = np.where(_in, _R1[_k1] - _R1[_k1 - 1], np.nan).astype(np.float32); D["rsi5"] = np.where(_in, _R5[_k5], np.nan).astype(np.float32); RSI = ["rsi1", "rsi1_d", "rsi5"]
 ts = pd.to_datetime(D["T"], unit="s"); D["ym"] = ts.dt.strftime("%Y-%m"); y = D.y_twap.values.astype(int); x = D.x_twap.values; Tt = D["T"].values; MONTHS = [m for m in sorted(D.ym.unique()) if m >= FIRST]
 LGB = dict(learning_rate=0.02, num_leaves=15, min_data_in_leaf=400, feature_fraction=0.5, bagging_fraction=0.7, bagging_freq=1, lambda_l2=50.0, max_bin=63, verbose=-1, num_threads=THREADS)
 BOOK_ALL = ["bk_imb0.2", "bk_imb1.0", "bk_imb2.0", "bk_imb5.0", "bk_outer", "bk_ldepth_rel", "bk_dimb1.0_300"]
@@ -51,6 +57,7 @@ V = {   # name: features, objective, extra lgb params, rounds, sample-weight hal
  "hist2024":  dict(f=BASE, obj="reg", p={}, r=(300, 500), hl=None, seeds=(0,), since="2024-01-01"),   # older training history (scripts/fetch_hist_feats.py)
  "hist2023":  dict(f=BASE, obj="reg", p={}, r=(300, 500), hl=None, seeds=(0,), since="2023-01-01"),
  "hist2022":  dict(f=BASE, obj="reg", p={}, r=(300, 500), hl=None, seeds=(0,), since="2022-01-01"),
+ "rsi":       dict(f=BASE + RSI, obj="reg", p={}, r=(300,), hl=None, seeds=(0,)),
  "small":     dict(f=BASE, obj="reg", p=dict(num_leaves=7, min_data_in_leaf=1000), r=(300, 600), hl=None, seeds=(0,)),
 }
 for name in sys.argv[1].split(","):
