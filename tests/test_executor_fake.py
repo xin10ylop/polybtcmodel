@@ -87,6 +87,14 @@ nb = len(Fake.book); Fake.ghost = "read timed out"; rg = ex.buy("A", TR + 300, "
 for sw in ex.sweeps: sw["at"] = [time.time() - 1]
 poll(ex, time.time())
 check("placement answer lost: the order that exists untracked on the book is found and cancelled", rg is None and len(gid) == 1 and Fake.book[gid[0]]["status"] == "canceled", str([Fake.book[g] for g in gid])); LE.MAX_OPEN = 3
+# stake multiplier (rule A, strongest signals): the order size scales, bounded to 1..5; the default is unchanged
+if "mult" in ex.buy.__code__.co_varnames:
+    LE.MAX_OPEN = 99; TM = T + 15000; m1 = ex.buy("A", TM, "UP", 0.50, time.time() + 100, "tM1", "tM1d", "cm1", TPX); m2 = ex.buy("A", TM + 300, "UP", 0.50, time.time() + 100, "tM2", "tM2d", "cm2", TPX, mult=2.0)
+    m3 = ex.buy("A", TM + 600, "DOWN", 0.50, time.time() + 100, "tM3", "tM3d", "cm3", TPX, mult=99); m4 = ex.buy("A", TM + 900, "DOWN", 0.50, time.time() + 100, "tM4", "tM4d", "cm4", TPX, mult=0.1)
+    check("stake multiplier: default 10 shares, x2 = 20, bounded above at x5 = 50 and below at x1 = 10", [Fake.book[k]["size"] for k in (m1, m2, m3, m4)] == [10.0, 20.0, 50.0, 10.0], str([Fake.book[k]["size"] for k in (m1, m2, m3, m4)]))
+    fill(m2, 20); poll(ex, time.time()); pm = ex.positions[("A", TM + 300)]; check("a doubled order that fills holds 20 shares", pm["size"] == 20, str(pm["size"]))
+    for k in (m1, m3, m4): ex.cancel_now("A", ex.orders[k]["T"]) if k in ex.orders else None
+    poll(ex, time.time()); LE.MAX_OPEN = 3
 # 9. risk: daily loss limit halts new trades
 ex.day_pnl = -26.0; r = ex.buy("A", T + 1800, "UP", 0.50, time.time() + 30, "a", "b", "c", TPX); check("daily loss limit stops new orders", r is None and ex.halted)
 print(f"\n{PKG}: {sum(RES)}/{len(RES)} checks passed"); sys.exit(0 if all(RES) else 1)

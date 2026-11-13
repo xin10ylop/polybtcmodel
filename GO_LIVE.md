@@ -170,3 +170,18 @@ Logs per bot in its PAPER_DIR: `paper.log` (decisions), `live.log` (orders), `li
   from the backtest (README: direction flips on 10 of 30 windows) and the new data-quality gate will block many trades. The ETH bot's Binance
   perp handlers are the BTC ones with the symbol changed; they could not be run from this container (Binance futures refuses US hosts), so check
   in the ETH bot's first dry-run hours that `forecasts.jsonl` shows `synth_clean: 0` from the second hour on and `perp_lag` under 2 s.
+
+## Stake by signal strength (added 2026-11-13, off by default)
+
+Filled trades of the live setup win 53.6 % at the weakest signals and 63.2 % at 2.2 times the trade threshold and above, in each of the
+three periods (Jun 1 - Aug 19, Aug 20 - Sep 30, Oct 1 - Nov 7); on the raw 14-month history the strongest group is right 58.7 %
+(Oct 2025 - May 2026) and 60.6 % (Jun - Nov 2026) against about 55 % for the rest (`research/deep/stake_by_score.py`).
+`A_STRONG_X=2.2 A_STRONG_MULT=2` doubles the stake on those signals (about one fill in ten).  In the simulation at a $10 base stake:
+profit +19 % for +9 % drawdown under the usual fill model, +23 % / +11 % under the strict one that reproduces the live refusal rate;
+at a $100 base (never above $200) the same idea with a lower cut-off adds 35 % for 15 % more drawdown (`research/deep/adaptive_policy.py`).
+`A_STRONG_X=0` (default) keeps the same stake on every signal.  Tests: `tests/test_stake_mult.py`, `tests/test_executor_fake.py`.
+
+Tested and NOT adopted in the same round: selling on a fast drop of the share price or on any in-window state (`speed_test.py`: no state
+where selling beats holding, and a model given price, speed, flow and Bitcoin's position does not beat the market price on unseen weeks);
+buying unfilled signals at the market (`late_take.py`); selling a filled position when the T-45 model disagrees (`exit_on_disagree.py`,
+those trades still win 53 %); raising the bid to 0.51 after T-45 agreement (+11 % under the usual fill model, not robust under the strict one).

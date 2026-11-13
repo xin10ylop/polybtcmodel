@@ -45,6 +45,12 @@ assert -240 <= A_DEC <= -45, "A_DEC must be between -240 and -45"
 _wh = os.environ.get("A_WEEKDAY_HOURS", "").strip()      # e.g. "16-24": on weekdays rule A trades only windows opening in these UTC hours; weekends always trade. Empty = every hour.
 A_WD_HOURS = tuple(int(x) for x in _wh.split("-")) if _wh else None
 assert A_WD_HOURS is None or (len(A_WD_HOURS) == 2 and 0 <= A_WD_HOURS[0] < A_WD_HOURS[1] <= 24), "A_WEEKDAY_HOURS must look like 16-24"
+A_STRONG_X = float(os.environ.get("A_STRONG_X", "0"))        # rule A: stake x A_STRONG_MULT when |score| >= A_STRONG_X times the trade threshold (0 = off, same stake on every signal)
+A_STRONG_MULT = float(os.environ.get("A_STRONG_MULT", "2"))  # filled trades win 53.6 % at the weakest signals and 63.2 % at 2.2x the threshold and above (research/deep/stake_by_score.py)
+assert A_STRONG_X == 0 or (A_STRONG_X >= 1 and 1 <= A_STRONG_MULT <= 5), "A_STRONG_X must be 0 or >= 1, A_STRONG_MULT between 1 and 5"
+def a_stake_mult(score, thr):
+    """Stake multiplier of a rule-A order: A_STRONG_MULT when the score is at least A_STRONG_X times the trade threshold, else 1."""
+    return A_STRONG_MULT if (A_STRONG_X > 0 and score is not None and np.isfinite(score) and abs(score) >= A_STRONG_X * thr) else 1.0
 def a_hours_ok(T):
     """Research (research/deep/policy_hours.py): with real fills the edge sits in weekends and weekday 16-24 UTC; weekday 00-16 UTC was a coin flip."""
     if A_WD_HOURS is None: return True
@@ -570,6 +576,7 @@ class Trader:
         import newa_live; self.newa45 = NewA(path=os.path.join(newa_live.MODELS, f"ourcase_{newa_live.ASSET}_d-45_live")) if self.a_confirm else None
         self.a_cancel = min(int(os.environ.get("A_CANCEL_S", ("-30" if A_DEC == -45 else "-15") if self.a_rule == "new" else "-40")), -5)      # the unfilled bid is cancelled at T+a_cancel. New rule: the bid goes out at about T-42 (it waits for the T-45 bar), so T-40 would leave about 3 s; with real fills the new model's top tier keeps its edge when the bid rests to T-30 (reports/deep_fill_sensitivity_BTC.csv)
         self.newa = NewA(); log((f"trading hours: weekdays {A_WD_HOURS[0]}-{A_WD_HOURS[1]} UTC, weekends all day" if A_WD_HOURS else "trading hours: all")); log(f"rule A: {self.a_rule}, decision at T{A_DEC}s, unfilled bid cancelled at T{self.a_cancel}s" + (f" (model {self.meta_name()}, trade when |score| >= {self.newa.thr:.4f} = {self.newa.tier})" if self.a_rule == "new" else ""))
+        log(f"stake: x{A_STRONG_MULT:g} when |score| >= {A_STRONG_X:g} x the threshold ({A_STRONG_X * self.newa.thr:.4f})" if A_STRONG_X > 0 else "stake: the same on every signal")
         self.exec = None
         if os.environ.get("LIVE") == "1":      # first: cancels the orders a crashed run left on the book before the 3-minute backfill
             from live_executor import LiveExecutor
@@ -767,10 +774,11 @@ class Trader:
                     if q.get("synth_clean", 0) > PERP_CLEAN_MAX: bad.append(f"{q['synth_clean']} rebuilt perp seconds in the last {PERP_CLEAN_S} s (start-up or feed outage; at most {PERP_CLEAN_MAX} allowed)")
                     if q.get("synth_last60", 0) > 0: bad.append(f"{q['synth_last60']} rebuilt perp s in the last 60")
                     if q.get("ffill_last60", 0) > 0: bad.append(f"{q['ffill_last60']} forward-filled spot s in the last 60")
+                    mult = a_stake_mult(ns, self.newa.thr)      # larger stake on the strongest signals (research/deep/stake_by_score.py)
                     def place(act, p_model):      # paper position (assumed fill) + the real order
                         side = act[4:]; self.a_side[T] = side
                         self.positions.append(Position("A", T, side, CFG_A["entry"], int((T + A_DEC) * 1000), CFG_A, p_model, mkt)); log(f"[A] BUY {side} @0.50 (assumed pre-open fill)")
-                        if self.exec and "A" in LIVE_STRATEGIES and not self.no_live: self.exec.buy("A", T, side, CFG_A["entry"], T + self.a_cancel, feed.up, feed.down, self.conds.get(T), CFG_A["tp"])
+                        if self.exec and "A" in LIVE_STRATEGIES and not self.no_live: self.exec.buy("A", T, side, CFG_A["entry"], T + self.a_cancel, feed.up, feed.down, self.conds.get(T), CFG_A["tp"], mult=mult)
                         elif self.exec and self.no_live: log(f"[A] real order NOT sent: {self.no_live}")
                         self.positions.append(Position("A0", T, side, CFG_A0["entry"], int((T + A_DEC) * 1000), CFG_A0, p_model, mkt))   # shadow with the other exit
                     action = new_action
@@ -794,8 +802,8 @@ class Trader:
                         action = old_action
                         if bad and action.startswith("BUY"): log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} NO TRADE (data quality): " + "; ".join(bad)); action = "skip-data"
                         if action.startswith("BUY"): place(action, p)
-                    self.ffc.write(json.dumps(dict(strategy="A", T=T, ts=round(time.time(), 2), market=mkt, z_s5=z5, agree=agree, book_imb=imb, book_age=bk_age, book_agree=book_agree, book_gates=self.book_vote, action=action, rule=self.a_rule, dec=A_DEC, new_score=ns, new_thr=self.newa.thr, f_disp15=nd15, open_known=open_known, new_action=new_action, old_action=old_action, quality=bad, **q, **fc)) + "\n"); self.ffc.flush()
-                    log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} NEW score={ns:+.4f} (trade at |score|>={self.newa.thr:.4f}) -> {action if self.a_rule == 'new' else new_action} | old rule: p_close={p:.3f} z5={z5:+.3f} agree={agree} -> {old_action} | market={mkt:.3f} ({fc.get('compute_s')}s, T{time.time() - T:+.1f}s)")
+                    self.ffc.write(json.dumps(dict(strategy="A", T=T, ts=round(time.time(), 2), stake_mult=mult, market=mkt, z_s5=z5, agree=agree, book_imb=imb, book_age=bk_age, book_agree=book_agree, book_gates=self.book_vote, action=action, rule=self.a_rule, dec=A_DEC, new_score=ns, new_thr=self.newa.thr, f_disp15=nd15, open_known=open_known, new_action=new_action, old_action=old_action, quality=bad, **q, **fc)) + "\n"); self.ffc.flush()
+                    log(f"[A] T={dt.datetime.fromtimestamp(T, dt.UTC):%H:%M} NEW score={ns:+.4f} (trade at |score|>={self.newa.thr:.4f}) -> {action if self.a_rule == 'new' else new_action}{f' x{mult:g} stake (strong signal)' if mult != 1.0 and str(action).startswith('BUY') else ''} | old rule: p_close={p:.3f} z5={z5:+.3f} agree={agree} -> {old_action} | market={mkt:.3f} ({fc.get('compute_s')}s, T{time.time() - T:+.1f}s)")
                 self.confirm_a(T, now)
                 # ---- strategy B decision at T (bars through T-1 final at ~T+1.5)
                 if "B" in ENABLED and T - 300 + 1.6 <= now < T - 300 + 10 and ("B", T - 300) not in self.done and self.tl.known >= (T - 300) - self.tl.t0_epoch:   # skip stale windows after a restart

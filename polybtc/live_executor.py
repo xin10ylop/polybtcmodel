@@ -178,8 +178,8 @@ class LiveExecutor:
         return True
 
     @staticmethod
-    def _size(price):
-        return max(MIN_SHARES, math.floor(STAKE_USD / price * 100) / 100)
+    def _size(price, mult=1.0):
+        return max(MIN_SHARES, math.floor(STAKE_USD * mult / price * 100) / 100)
 
     @staticmethod
     def _floor2(x):
@@ -237,13 +237,15 @@ class LiveExecutor:
                 if o["kind"] == "buy" and o["strategy"] == strategy and o["T"] == T and not o.get("cancel_sent"): o["cancel_at"] = time.time() - 1; self._last_poll = 0
 
     # ---------------------------------------------------------------- decisions from the paper trader
-    def buy(self, strategy, T, side, price, cancel_at, token_up, token_down, condition_id, tp):
-        """Rest a BUY limit for `strategy` on `side` at `price`; cancel at epoch `cancel_at` if unfilled; sell limit `tp` after the fill (None = hold)."""
+    def buy(self, strategy, T, side, price, cancel_at, token_up, token_down, condition_id, tp, mult=1.0):
+        """Rest a BUY limit for `strategy` on `side` at `price`; cancel at epoch `cancel_at` if unfilled; sell limit `tp` after the fill (None = hold).
+        mult scales the stake for this order (rule A: larger on the strongest signals); it is bounded to 1..5 here whatever the caller passes."""
+        mult = min(max(float(mult), 1.0), 5.0)
         with self.lock:
             if not self._can_open(strategy): return None
             if cancel_at is not None and time.time() > cancel_at - 1.0:
                 log(f"[{strategy}] BUY {side} NOT placed: {cancel_at - time.time():+.1f}s to its cancel time (decision came too late)"); self._rec(self.fo, event="late", strategy=strategy, T=T, side=side); return None
-            token = token_up if side == "UP" else token_down; size = self._size(price); price = self._floor2(price)   # never bid above the print
+            token = token_up if side == "UP" else token_down; size = self._size(price, mult); price = self._floor2(price)   # never bid above the print
             try:
                 r, taker = self._place(token, "BUY", price, size)
             except Exception as e:
