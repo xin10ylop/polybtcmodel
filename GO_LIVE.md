@@ -185,3 +185,15 @@ Tested and NOT adopted in the same round: selling on a fast drop of the share pr
 where selling beats holding, and a model given price, speed, flow and Bitcoin's position does not beat the market price on unseen weeks);
 buying unfilled signals at the market (`late_take.py`); selling a filled position when the T-45 model disagrees (`exit_on_disagree.py`,
 those trades still win 53 %); raising the bid to 0.51 after T-45 agreement (+11 % under the usual fill model, not robust under the strict one).
+
+## Strong-signal rule (added 2026-11-20, off by default)
+
+`A_MIN_X=1.7 A_CONFIRM_STRONG=1`: trade only when |score| >= 1.7 x the top-30 % threshold (0.1190), and at T-43 keep an unfilled bid only when the T-45
+model agrees AND is in its own top 30 % (|score45| >= 0.0957).  `research/deep/strong_lab.py` (4 bid variants x 6 cut-offs, chosen by a rule fixed in
+advance on Jun 1 - Sep 30, judged on Oct 1 - Nov 19; Nov 8-19 from the production models on Binance's official data and the real Polymarket tape):
+4.9 trades a day, 60.6 % won (61.3 % in the choice period, 59.3 % after), at $200 stakes $20,888 with a $1,139 max drawdown and 2 losing weeks
+of 25, against $37,431 / $2,996 / 4 of 25 for the default rule.  Raw accuracy of the same signals on 13 months: 57.1 % (Nov 2025 - May 2026) and
+59.8 % (Jun - Nov 2026) against 55.3 % / 56.4 % for every top-30 % signal.  After the choice period its profit per dollar of drawdown was 5.3
+against 6.5 for the default rule, so it is the steadier rule (win rate, losing weeks), not a proven better earner; at small stakes (orders fill
+completely) the default rule earns about twice as much.  Bidding only after the T-45 check (from T-43) was worse in every version.
+Tests: `tests/test_strong_rule.py`, `tests/test_confirm.py` (follows A_CONFIRM_STRONG).

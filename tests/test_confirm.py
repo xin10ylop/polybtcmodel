@@ -10,13 +10,13 @@ D120 = pd.concat([pd.read_parquet(f) for f in glob.glob("/home/user/data/deep/fe
 class FakeExec:
     def __init__(self): self.calls = []
     def cancel_now(self, st, T): self.calls.append((st, T))
-tr = object.__new__(pt.Trader); tr.tl = tl; tr.model = pt.Model(tl); tr.newa45 = na45; tr.a_confirm = True; tr.a_side = {}; tr.done = set(); tr.exec = FakeExec(); tr.ffc = open(os.path.join(os.environ["PAPER_DIR"], "f.jsonl"), "w")
+tr = object.__new__(pt.Trader); tr.tl = tl; tr.model = pt.Model(tl); tr.newa45 = na45; tr.thr45 = float(na45.meta["tier_abs_score"]["top30"]); tr.a_confirm = True; tr.a_side = {}; tr.done = set(); tr.exec = FakeExec(); tr.ffc = open(os.path.join(os.environ["PAPER_DIR"], "f.jsonl"), "w")
 rng = np.random.default_rng(3); Ts = sorted(int(d0.timestamp()) + 300 * int(k) for k in rng.choice(288, N, replace=False)); bad = 0; nd = 0
 for T in Ts:
     s120 = float(na120.booster.predict(np.array([[float(D120.loc[T][f]) for f in na120.feats]], dtype=np.float32))[0]); s45 = float(na45.booster.predict(np.array([[float(D45.loc[T][f]) for f in na45.feats]], dtype=np.float32))[0])
-    side = "UP" if s120 > 0 else "DOWN"; tr.a_side[T] = side; want = (s45 > 0) != (side == "UP")
+    side = "UP" if s120 > 0 else "DOWN"; tr.a_side[T] = side; want = not pt.a_keep_bid(side, s45, tr.thr45)      # disagrees (or, with A_CONFIRM_STRONG=1, agrees only weakly)
     tl.known = (T - 45) - tl.t0_epoch; tl.last_spot_sec = T - 45
     early = tr.confirm_a(T, T - 60.0); got = tr.confirm_a(T, T - 43.5); again = tr.confirm_a(T, T - 43.0)
     called = ("A", T) in tr.exec.calls; nd += want
     if early is not None or again is not None or got != want or called != want: bad += 1; print("MISMATCH", T, side, round(s45, 4), "want", want, "got", got, "called", called, early, again)
-print(f"{N} windows on {DAY}: the T-45 model disagreed with the T-120 side in {nd}; cancel sent exactly in those: {'PASS' if bad == 0 else f'FAIL ({bad})'}"); sys.exit(0 if bad == 0 else 1)
+print(f"{N} windows on {DAY}: the T-45 model {'disagreed or agreed only weakly' if pt.A_CONFIRM_STRONG else 'disagreed'} with the T-120 side in {nd}; cancel sent exactly in those: {'PASS' if bad == 0 else f'FAIL ({bad})'}"); sys.exit(0 if bad == 0 else 1)
