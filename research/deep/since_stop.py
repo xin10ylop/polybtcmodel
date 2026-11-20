@@ -25,9 +25,11 @@ for w in sig:
     if up is None: continue
     rel = np.array([p[0] for p in pr]); o0 = np.array([p[2] == 0 for p in pr], bool); buy = np.array([p[1] == "BUY" for p in pr], bool); px = np.array([p[3] for p in pr]); usd = px * np.array([p[4] for p in pr]); pu = np.where(o0, px, 1 - px); lu = (o0 & buy) | (~o0 & ~buy); po = pu if sd == 0 else 1 - pu; tb = lu if sd == 0 else ~lu
     last = np.flatnonzero((rel < -118) & (rel >= -178)); refused = len(last) > 0 and ((tb[last[-1]] and po[last[-1]] <= 0.50 + 1e-6) or (not tb[last[-1]] and po[last[-1]] < 0.495)); agree = (s45.get(w, np.nan) > 0) == (s > 0) if np.isfinite(s45.get(w, np.nan)) else True; stop = -15 if agree else -44
-    k = np.flatnonzero(~tb & (rel >= -118) & (rel <= stop) & (po <= 0.50 + 1e-6)) if len(rel) else np.zeros(0, int); filled = False
-    if len(k) and not refused: c = np.cumsum(usd[k]); filled = bool((po[k] < 0.495).any() or c[-1] >= 50.0)
-    won = up if sd == 0 else not up; rows.append(dict(T=w, t=pd.Timestamp(w, unit="s"), side="UP" if sd == 0 else "DOWN", score=s, strong=abs(s) >= 2.2 * thr, agree=agree, refused=refused, filled=filled, won=won))
+    k = np.flatnonzero(~tb & (rel >= -118) & (rel <= stop) & (po <= 0.50 + 1e-6)) if len(rel) else np.zeros(0, int); filled = False; va = 0.0
+    if len(k) and not refused:
+        c = np.cumsum(usd[k]); okq = (po[k] < 0.495) | (c >= 50.0); filled = bool(okq.any())
+        if filled: j = int(np.argmax(okq)); va = float(max(c[-1] - 50.0, 0.0)) if c[j] >= 50.0 else float(usd[k[j:]].sum())      # dollars left for us after the queue ahead (as policy_lab)
+    won = up if sd == 0 else not up; rows.append(dict(T=w, t=pd.Timestamp(w, unit="s"), side="UP" if sd == 0 else "DOWN", score=s, strong=abs(s) >= 2.2 * thr, agree=agree, refused=refused, filled=filled, won=won, va=va))
 X = pd.DataFrame(rows); X["stake"] = np.where(X.strong, 20.0, 10.0); X["pnl"] = np.where(X.filled, np.where(X.won, X.stake, -X.stake), 0.0); f = X[X.filled]; X.to_csv(D + "since_stop.csv", index=False)
 print(f"period {sys.argv[1]} .. {sys.argv[2]} UTC, trading hours: {len(X)} signals, all of them right {100*X.won.mean():.1f} %; refused as crossing {int(X.refused.sum())}; would have FILLED {len(f)}: won {int(f.won.sum())}, lost {int((~f.won).sum())} -> {100*f.won.mean():.1f} %; not filled: right {100*X.won[~X.filled].mean():.1f} %")
 print(f"   profit at the $10 stake with the strongest doubled: ${f.pnl.sum():+.0f} (doubled trades: {int(f.strong.sum())}, won {int((f.strong & f.won).sum())}); flat $10: ${np.where(f.won, 10, -10).sum():+.0f}")
